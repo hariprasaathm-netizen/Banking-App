@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Family  Portfolio Manager</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- ===== TOP NAV ===== -->
+  <header class="topbar">
+    <div class="topbar-brand">
+      <span class="brand-icon">🏦</span>
+      <span class="brand-name">My Portfolio Manager</span>
+    </div>
+    <nav class="topbar-nav">
+      <button class="nav-btn active" data-page="dashboard">📊 Dashboard</button>
+      <button class="nav-btn" data-page="family">👨‍👩‍👧‍👦 Family</button>
+      <button class="nav-btn" data-page="accounts">🏛 Accounts</button>
+      <button class="nav-btn" data-page="deposits">💰 Deposits</button>
+      <button class="nav-btn" data-page="alerts">🔔 Alerts</button>
+    </nav>
+    <button class="btn-export" id="exportBtn">⬇ Export CSV</button>
+  </header>
+
+  <!-- ===== ALERT BANNER ===== -->
+  <div id="alertBanner" class="alert-banner hidden"></div>
+
+  <!-- ===== PAGES ===== -->
+  <main class="main-content">
+
+    <!-- DASHBOARD PAGE -->
+    <section id="page-dashboard" class="page active">
+      <div class="page-header">
+        <h1>Portfolio Overview</h1>
+        <p class="subtitle">Your complete family fixed deposit snapshot</p>
+      </div>
+
+      <!-- Summary Cards -->
+      <div class="summary-grid">
+        <div class="summary-card blue">
+          <div class="card-label">Total Invested</div>
+          <div class="card-value" id="totalInvested">₹0</div>
+          <div class="card-sub" id="totalFDs">0 FDs</div>
+        </div>
+        <div class="summary-card green">
+          <div class="card-label">Total Maturity Value</div>
+          <div class="card-value" id="totalMaturity">₹0</div>
+          <div class="card-sub" id="totalInterest">Interest: ₹0</div>
+        </div>
+        <div class="summary-card orange">
+          <div class="card-label">Maturing Within 90 Days</div>
+          <div class="card-value" id="maturingSoon">0</div>
+          <div class="card-sub">Needs attention</div>
+        </div>
+        <div class="summary-card purple">
+          <div class="card-label">Family Members</div>
+          <div class="card-value" id="totalMembers">0</div>
+          <div class="card-sub" id="activeMembersLabel">Active accounts</div>
+        </div>
+      </div>
+
+      <!-- Quick Stats Row -->
+      <div class="summary-grid">
+        <div class="summary-card light-gray">
+          <div class="card-label">Active FDs</div>
+          <div class="card-value" id="stat-active-fds">0</div>
+          <div class="card-sub">Currently running</div>
+        </div>
+        <div class="summary-card light-gray">
+          <div class="card-label">Upcoming Maturities</div>
+          <div class="card-value" id="stat-upcoming">0</div>
+          <div class="card-sub">Next 90 days</div>
+        </div>
+      </div>
+
+      <!-- Investment Overview - Quick Navigation -->
+      <div class="section-card">
+        <h2>Investment Accounts</h2>
+        <p style="color:var(--gray-500);font-size:.9rem;margin-bottom:1.2rem">Click any category to view details</p>
+        <div class="nav-grid">
+          <button class="nav-pill" onclick="navTo('deposits')">
+            <span class="nav-icon">💰</span>
+            <span class="nav-label">FD Deposits</span>
+            <span class="nav-count" id="nav-count-fd">0</span>
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- FAMILY PAGE -->
+    <section id="page-family" class="page">
+      <div class="page-header">
+        <h1>Family Members</h1>
+        <p class="subtitle">Manage the account holders in your family</p>
+      </div>
+
+      <div class="two-col">
+        <!-- Add / Edit Form -->
+        <div class="section-card form-card">
+          <h2 id="familyFormTitle">Add Member</h2>
+          <form id="familyForm">
+            <input type="hidden" id="memberId" />
+            <div class="form-group">
+              <label>Full Name *</label>
+              <input type="text" id="memberName" placeholder="e.g. Ramesh Kumar" required />
+            </div>
+            <div class="form-group">
+              <label>Relationship *</label>
+              <select id="memberRelation" required>
+                <option value="">Select...</option>
+                <option>Self</option>
+                <option>Spouse</option>
+                <option>Father</option>
+                <option>Mother</option>
+                <option>Son</option>
+                <option>Daughter</option>
+                <option>Brother</option>
+                <option>Sister</option>
+                <option>Other</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>PAN / ID (optional)</label>
+              <input type="text" id="memberPan" placeholder="ABCDE1234F" maxlength="10" style="text-transform:uppercase" />
+            </div>
+            <div class="form-group">
+              <label>Phone (optional)</label>
+              <input type="tel" id="memberPhone" placeholder="9XXXXXXXXX" maxlength="10" />
+            </div>
+            <div class="form-group">
+              <label>Email (optional)</label>
+              <input type="email" id="memberEmail" placeholder="name@email.com" />
+            </div>
+            <div class="form-group">
+              <label>Notes</label>
+              <textarea id="memberNotes" placeholder="Any additional notes..." rows="2"></textarea>
+            </div>
+            <div class="form-actions">
+              <button type="submit" class="btn-primary">💾 Save Member</button>
+              <button type="button" class="btn-secondary" id="clearFamilyForm">✕ Clear</button>
+            </div>
+          </form>
+        </div>
+
+        <!-- Member List -->
+        <div class="section-card">
+          <h2>Members (<span id="memberCount">0</span>)</h2>
+          <div id="memberList" class="member-list">
+            <p class="empty-text">No members added yet.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ACCOUNTS PAGE -->
+    <section id="page-accounts" class="page">
+      <div class="page-header">
+        <h1>Bank Accounts</h1>
+        <p class="subtitle">Primary bank accounts for each family member — link these to your FDs</p>
+      </div>
+
+      <div class="two-col">
+        <!-- Add / Edit Account Form -->
+        <div class="section-card form-card">
+          <h2 id="acctFormTitle">Add Bank Account</h2>
+          <form id="acctForm">
+            <input type="hidden" id="acctId" />
+            <div class="form-group">
+              <label>Account Holder *</label>
+              <select id="acctMember" required>
+                <option value="">Select member...</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Bank Name *</label>
+              <input type="text" id="acctBank" list="acctBankSuggestions" placeholder="e.g. SBI, HDFC Bank" required />
+              <datalist id="acctBankSuggestions">
+                <option value="State Bank of India (SBI)">
+                <option value="HDFC Bank">
+                <option value="ICICI Bank">
+                <option value="Axis Bank">
+                <option value="Punjab National Bank">
+                <option value="Bank of Baroda">
+                <option value="Canara Bank">
+                <option value="Union Bank of India">
+                <option value="Kotak Mahindra Bank">
+                <option value="IndusInd Bank">
+                <option value="IDFC First Bank">
+                <option value="Yes Bank">
+                <option value="Post Office">
+              </datalist>
+            </div>
+            <div class="form-group">
+              <label>Account Number *</label>
+              <input type="text" id="acctNumber" placeholder="e.g. 123456789012" required />
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label>Account Type *</label>
+                <select id="acctType" required>
+                  <option value="">Select...</option>
+                  <option value="Savings">Savings</option>
+                  <option value="Current">Current</option>
+                  <option value="NRE">NRE</option>
+                  <option value="NRO">NRO</option>
+                  <option value="Salary">Salary</option>
+                  <option value="Joint">Joint</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label>IFSC Code</label>
+                <input type="text" id="acctIfsc" placeholder="SBIN0001234" maxlength="11" style="text-transform:uppercase" />
+              </div>
+            </div>
+            <div class="form-group">
+              <label>Branch Name</label>
+              <input type="text" id="acctBranch" placeholder="e.g. Anna Nagar, Chennai" />
+            </div>
+            <div class="form-group">
+              <label>Account Holder Name (as per bank)</label>
+              <input type="text" id="acctHolderName" placeholder="Name printed on passbook" />
+            </div>
+            <div class="form-group">
+              <label>Opening Date</label>
+              <input type="date" id="acctOpenDate" />
+            </div>
+            <div class="form-group" style="display:flex;align-items:center;gap:.6rem">
+              <input type="checkbox" id="acctPrimary" style="width:auto;margin:0" />
+              <label for="acctPrimary" style="margin:0;font-weight:600;cursor:pointer">Mark as Primary account for this member</label>
+            </div>
+            <div class="form-group">
+              <label>Notes</label>
+              <textarea id="acctNotes" placeholder="Internet banking, passbook details..." rows="2"></textarea>
+            </div>
+            <div class="form-actions">
+              <button type="submit" class="btn-primary">💾 Save Account</button>
+              <button type="button" class="btn-secondary" id="clearAcctForm">✕ Clear</button>
+            </div>
+          </form>
+        </div>
+
+        <!-- Account List grouped by member -->
+        <div class="section-card">
+          <div class="section-header">
+            <h2>All Accounts (<span id="acctCount">0</span>)</h2>
+            <select id="acctMemberFilter" class="select-input">
+              <option value="">All Members</option>
+            </select>
+          </div>
+          <div id="acctList" class="acct-list">
+            <p class="empty-text">No accounts added yet.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- DEPOSITS PAGE -->
+    <section id="page-deposits" class="page">
+      <div class="page-header">
+        <h1>Fixed Deposits</h1>
+        <p class="subtitle">Add and manage all your FDs</p>
+      </div>
+
+      <div class="two-col">
+        <!-- Add / Edit FD Form -->
+        <div class="section-card form-card">
+          <h2 id="fdFormTitle">Add Fixed Deposit</h2>
+          <form id="fdForm">
+            <input type="hidden" id="fdId" />
+            <div class="form-group">
+              <label>Account Holder *</label>
+              <select id="fdMember" required>
+                <option value="">Select member...</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Link to Bank Account</label>
+              <select id="fdLinkedAccount">
+                <option value="">Select member first...</option>
+              </select>
+              <small style="color:var(--gray-400);font-size:.78rem">Select member to see their accounts</small>
+            </div>
+            <div class="form-group">
+              <label>Bank / Institution *</label>
+              <input type="text" id="fdBank" list="bankSuggestions" placeholder="e.g. SBI, HDFC, Post Office" required />
+              <datalist id="bankSuggestions">
+                <option value="State Bank of India (SBI)">
+                <option value="HDFC Bank">
+                <option value="ICICI Bank">
+                <option value="Axis Bank">
+                <option value="Punjab National Bank">
+                <option value="Bank of Baroda">
+                <option value="Canara Bank">
+                <option value="Union Bank of India">
+                <option value="Kotak Mahindra Bank">
+                <option value="IndusInd Bank">
+                <option value="Post Office (NSC)">
+                <option value="Post Office (TD)">
+                <option value="IDFC First Bank">
+                <option value="Yes Bank">
+                <option value="RBL Bank">
+              </datalist>
+            </div>
+            <div class="form-group">
+              <label>FD Account / Receipt Number</label>
+              <input type="text" id="fdAccountNo" placeholder="FD Receipt / Account No." />
+            </div>
+            <div class="form-group">
+              <label>Principal Amount (₹) *</label>
+              <input type="number" id="fdPrincipal" placeholder="100000" min="1" required />
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label>Interest Rate (% p.a.) *</label>
+                <input type="number" id="fdRate" placeholder="7.25" step="0.01" min="0.01" required />
+              </div>
+              <div class="form-group">
+                <label>Compounding</label>
+                <select id="fdCompounding">
+                  <option value="simple">Simple Interest</option>
+                  <option value="quarterly" selected>Quarterly</option>
+                  <option value="monthly">Monthly</option>
+                  <option value="annually">Annually</option>
+                </select>
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label>Start Date *</label>
+                <input type="date" id="fdStartDate" required />
+              </div>
+              <div class="form-group">
+                <label>Tenure</label>
+                <div class="tenure-row">
+                  <input type="number" id="fdTenureYears" placeholder="0" min="0" max="30" value="0" />
+                  <span>Yrs</span>
+                  <input type="number" id="fdTenureMonths" placeholder="0" min="0" max="11" value="0" />
+                  <span>Mo</span>
+                  <input type="number" id="fdTenureDays" placeholder="0" min="0" max="30" value="0" />
+                  <span>Days</span>
+                </div>
+              </div>
+            </div>
+            <div class="form-group">
+              <label>OR Maturity Date (overrides tenure)</label>
+              <input type="date" id="fdMaturityDate" />
+            </div>
+            <div class="form-group">
+              <label>Interest Payout</label>
+              <select id="fdPayout">
+                <option value="cumulative">Cumulative (on maturity)</option>
+                <option value="monthly">Monthly</option>
+                <option value="quarterly">Quarterly</option>
+                <option value="annually">Annually</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Nominee</label>
+              <select id="fdNominee">
+                <option value="">None / Not set</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Notes</label>
+              <textarea id="fdNotes" placeholder="Renewal instructions, branch details..." rows="2"></textarea>
+            </div>
+
+            <!-- Live Preview -->
+            <div class="fd-preview" id="fdPreview">
+              <h3>📋 Live Preview</h3>
+              <div class="preview-grid">
+                <div><span>Maturity Date</span><strong id="previewMaturityDate">—</strong></div>
+                <div><span>Tenure</span><strong id="previewTenure">—</strong></div>
+                <div><span>Maturity Amount</span><strong id="previewMaturityAmt">—</strong></div>
+                <div><span>Interest Earned</span><strong id="previewInterest">—</strong></div>
+              </div>
+            </div>
+
+            <div class="form-actions">
+              <button type="submit" class="btn-primary">💾 Save FD</button>
+              <button type="button" class="btn-secondary" id="clearFdForm">✕ Clear</button>
+            </div>
+          </form>
+        </div>
+
+        <!-- FD List -->
+        <div class="section-card">
+          <div class="section-header">
+            <h2>My FDs (<span id="fdCount">0</span>)</h2>
+            <input type="text" id="fdSearch" class="search-input" placeholder="🔍 Search FDs..." />
+          </div>
+          <div id="fdList" class="fd-list">
+            <p class="empty-text">No FDs added yet.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ALERTS PAGE -->
+    <section id="page-alerts" class="page">
+      <div class="page-header">
+        <h1>Maturity Alerts</h1>
+        <p class="subtitle">FDs nearing maturity or already matured</p>
+      </div>
+
+      <div class="alerts-filter-row">
+        <button class="filter-chip active" data-days="30">Within 30 days</button>
+        <button class="filter-chip" data-days="60">Within 60 days</button>
+        <button class="filter-chip" data-days="90">Within 90 days</button>
+        <button class="filter-chip" data-days="180">Within 180 days</button>
+        <button class="filter-chip" data-days="0">Already Matured</button>
+      </div>
+
+      <div id="alertsList" class="alerts-list"></div>
+    </section>
+
+  </main>
+
+  <!-- ===== MODAL ===== -->
+  <div id="modal" class="modal-overlay hidden">
+    <div class="modal-box">
+      <div class="modal-header">
+        <h3 id="modalTitle">FD Details</h3>
+        <button class="modal-close" id="modalClose">✕</button>
+      </div>
+      <div id="modalBody" class="modal-body"></div>
+    </div>
+  </div>
+
+  <!-- ===== CONFIRM DIALOG ===== -->
+  <div id="confirmDialog" class="modal-overlay hidden">
+    <div class="modal-box confirm-box">
+      <p id="confirmMsg">Are you sure?</p>
+      <div class="form-actions">
+        <button class="btn-danger" id="confirmYes">Yes, Delete</button>
+        <button class="btn-secondary" id="confirmNo">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

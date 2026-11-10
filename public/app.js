@@ -85,6 +85,12 @@ async function handleSignup(e) {
   const password = document.getElementById('signupPassword').value;
   const displayName = document.getElementById('signupName').value;
   
+  // Client-side password validation
+  if (password.length < 12) {
+    showAuthError('Password must be at least 12 characters');
+    return;
+  }
+  
   showAuthLoading(true);
   clearAuthError();
   
@@ -100,15 +106,55 @@ async function handleSignup(e) {
       throw new Error(err.error || 'Signup failed');
     }
     
-    currentUser = await res.json();
+    const userData = await res.json();
+    currentUser = userData;
     document.getElementById('signupForm').reset();
-    switchAuthTab('login');
-    showApp();
-    await loadAllData();
+    
+    // If there are unowned members, show claim dialog
+    if (userData.unownedMembers && userData.unownedMembers.length > 0) {
+      showClaimMembersDialog(userData.unownedMembers);
+    } else {
+      switchAuthTab('login');
+      showApp();
+      await loadAllData();
+    }
   } catch (err) {
     showAuthError(err.message);
   } finally {
     showAuthLoading(false);
+  }
+}
+
+async function showClaimMembersDialog(members) {
+  const membersList = members.map(m => `<li>${m.name} (${m.relation})</li>`).join('');
+  const message = `Found ${members.length} existing family member(s):\n\n<ul style="text-align:left">${membersList}</ul>\n\nWould you like to link them to your account?`;
+  
+  if (confirm(`Found ${members.length} existing family member(s). Link them to your account?`)) {
+    await claimFamilyMembers();
+  }
+  
+  showApp();
+  await loadAllData();
+}
+
+async function claimFamilyMembers() {
+  try {
+    const res = await fetch('/api/auth/claim-members', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ claimAll: true })
+    });
+    
+    if (!res.ok) {
+      const err = await res.json();
+      console.error('Failed to claim members:', err.error);
+      return;
+    }
+    
+    const result = await res.json();
+    console.log('✅ ' + result.message);
+  } catch (err) {
+    console.error('Error claiming members:', err);
   }
 }
 

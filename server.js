@@ -11,9 +11,31 @@ const { uid, initDb, query, queryOne, run } = require('./src/db.js');
 const app = express();
 app.use(express.json());
 
+// ── Environment Validation ────────────────────────────────────
+const DEFAULT_SESSION_SECRET = 'fd-portfolio-dev-secret-change-in-prod';
+const SESSION_SECRET = process.env.SESSION_SECRET || DEFAULT_SESSION_SECRET;
+
+// Only warn/error in production if on Railway or if explicitly set to production
+const isCloudProduction = process.env.RAILWAY_ENVIRONMENT_NAME || process.env.HEROKU_APP_NAME;
+if (isCloudProduction && SESSION_SECRET === DEFAULT_SESSION_SECRET) {
+  console.error('❌ ERROR: SESSION_SECRET must be set in production!');
+  console.error('   Set the SESSION_SECRET environment variable to a strong random string.');
+  process.exit(1);
+}
+
+// ── HTTPS Redirect Middleware (Production) ─────────────────
+if (process.env.NODE_ENV === 'production') {
+  app.use((req, res, next) => {
+    if (req.protocol !== 'https' && req.get('x-forwarded-proto') !== 'https') {
+      return res.redirect(301, 'https://' + req.get('host') + req.url);
+    }
+    next();
+  });
+}
+
 // ── Session Middleware ────────────────────────────────────────
 app.use(session({
-  secret: process.env.SESSION_SECRET || 'fd-portfolio-dev-secret-change-in-prod',
+  secret: SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
   cookie: {
@@ -119,8 +141,8 @@ app.post('/api/auth/signup', async (req, res) => {
     if (!isValidEmail(email)) {
       return res.status(400).json({ error: 'Invalid email format' });
     }
-    if (password.length < 6) {
-      return res.status(400).json({ error: 'Password must be at least 6 characters' });
+    if (password.length < 12) {
+      return res.status(400).json({ error: 'Password must be at least 12 characters' });
     }
     
     // Check if user already exists
@@ -143,9 +165,11 @@ app.post('/api/auth/signup', async (req, res) => {
       [userId, email, passwordHash, displayName, isFirstUser ? 1 : 0]
     );
     
-    // If first user, link existing members to this user
+    // Check for unowned members on first signup
+    let unownedMembers = [];
     if (isFirstUser) {
-      await run('UPDATE members SET user_id=$1 WHERE user_id IS NULL OR user_id=\'\'', [userId]);
+      const unowned = await query('SELECT id, name, relation FROM members WHERE user_id IS NULL OR user_id=\'\'', []);
+      unownedMembers = unowned.map(m => ({ id: m.id, name: m.name, relation: m.relation }));
     }
     
     // Set session
@@ -154,7 +178,10 @@ app.post('/api/auth/signup', async (req, res) => {
     res.status(201).json({
       id: userId,
       email: email,
-      displayName: displayName
+      displayName: displayName,
+      unownedMembers: unownedMembers,
+      isFirstUser: isFirstUser,
+      message: unownedMembers.length > 0 ? `Found ${unownedMembers.length} existing family member(s). You can link them to your account.` : ''
     });
   } catch (err) {
     console.error('Signup error:', err);
@@ -192,6 +219,38 @@ app.post('/api/auth/login', async (req, res) => {
     });
   } catch (err) {
     console.error('Login error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/auth/logout', (req, res) => {
+  req.session.destroy((err) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json({ ok: true });
+  });
+});
+
+// ── Claim unowned family members (after signup) ─────────────────
+app.post('/api/auth/claim-members', requireAuth, async (req, res) => {
+  try {
+    const { claimAll = false } = req.body;
+    
+    if (claimAll) {
+      // Link all unowned members and goals to this user
+      await run('UPDATE members SET user_id=$1 WHERE user_id IS NULL OR user_id=\'\'', [req.session.userId]);
+      await run('UPDATE goals SET user_id=$1 WHERE user_id IS NULL OR user_id=\'\'', [req.session.userId]);
+      
+      const unowned = await query('SELECT id, name FROM members WHERE user_id=$1', [req.session.userId]);
+      res.json({
+        success: true,
+        message: `Successfully linked ${unowned.length} family member(s) to your account`,
+        count: unowned.length
+      });
+    } else {
+      res.status(400).json({ error: 'Invalid request' });
+    }
+  } catch (err) {
+    console.error('Claim members error:', err);
     res.status(500).json({ error: err.message });
   }
 });

@@ -1,150 +1,286 @@
-# Phase 1 UI/UX Improvements: Family Portfolio Manager
+# Authentication and Data Isolation Implementation Review
 
 ## Summary
 
-Phase 1 implements four core UX enhancements: loading skeletons with CSS shimmer animation, styled empty states with CTA buttons, filter pills for deposits with live status filtering, and real-time form validation for member and deposit forms. The work is additive, preserving all existing functionality while layering new feedback mechanisms and constraints. All features are present and functional, with validation logic firing only after user interaction (not on page load), pills properly filtering combined with search, and empty states replacing placeholder text across multiple list containers.
+The Family Portfolio Manager adds login/signup with session-based auth, bcrypt password hashing, and data filtering by user. The implementation follows reasonable security patterns for a single-user portfolio app: passwords are hashed with bcrypt (saltRounds 12), session cookies are httpOnly, and protected API endpoints verify ownership before returning data. However, there are four significant gaps that should be addressed before beta release: the SESSION_SECRET hardcodes a dev value with a "change-in-prod" comment but provides no enforcement; a critical startup migration silently links all unowned members to the first user without user consent or visibility; signup accepts passwords as short as 6 characters when OWASP recommends 12+; and the app shows no security guidance to users about password strength or browser security warnings.
 
-**Watch for:** Validation disables submit buttons prematurely in some scenarios (pristine forms where only optional fields exist); consider whether optional-only forms should have early-disabled submit buttons. Filter pill styling is correct but result count updates only when pills change, not when search input alone changes—this is consistent but worth confirming is intentional. One minor UX asymmetry: pills filter by exact status names ('active', 'matured') but the FD list renders status labels as display names ('Active', 'Matured'); this is transparent to the user but relies on correct enum mapping.
+**Watch for:** SESSION_SECRET insufficient protection; silent startup data migration; weak password policy; missing HTTPS enforcement for production; no TLS configuration in auth routes.
 
-**Verdict**: APPROVED
+**Verdict**: NEEDS_CHANGES
 
 ---
 
 ## High-level View
 
-Loading skeletons are woven into three critical render paths: FD list, dashboard table, and investment lists (PF, NPS, SIP). The shimmer animation is defined once in CSS and reused consistently; skeletons are shown before async operations and replaced with real data or empty states after fetch completes. The CSS backbone is solid—skeleton cells are composable and the animation never interferes with real content.
+The auth layer implements email/password signup and login via POST endpoints that hash passwords and set httpOnly session cookies. Data isolation is enforced at the query level: member endpoints filter by user_id, and higher-level resources (deposits, accounts, PF, NPS, SIP, goals) filter through subqueries that require the member to belong to the authenticated user. A startup migration runs on boot to link unowned members to the first user created, automating the common case of existing demo data needing an owner, but this runs silently without notification to the user that their data was claimed during signup.
 
-Empty states replace the bare "No X added yet" text with a centered card layout (icon, heading, description, CTA button, optional tip). Each list container has its own empty state config with specific iconography and call-to-action—member list triggers focus on name input, FD list navigates to deposits page, etc. The `renderEmptyState()` helper generates HTML and stores callback closures in a global action registry. This approach works but is unconventional; a more standard pattern would be event delegation or data attributes tied to specific actions.
+Frontend auth is gated: the app shows an auth screen until /api/auth/me succeeds, then reveals the app and hides auth UI. Logout destroys the session and clears in-memory state. Error messages are shown to the user.
 
-Filter pills below the FD search input toggle between all/active/maturing/matured status and update the active pill styling on click. The pills are correctly wired to redraw the FD list with the combined filter (search text + status pill). The result count displays below pills and updates whenever pills change or search changes. All four pill states have working toggle logic and no regressions in existing search functionality.
-
-Form validation runs on `input` and `blur` events after a field is touched, and never fires on page load. Member form validates name (2–100 chars), PAN (if provided, must match Indian PAN format), phone (if provided, 10 digits), email (if provided, valid format). Deposit form validates principal and rate (both > 0) and dates (valid, start ≤ maturity if both set). Validation icons (✓ / ✗) are appended to field containers, error messages appear below invalid fields in red, and submit buttons disable while any required field is invalid. All validation selectors and error messages are wired correctly to the form field structure.
-
----
-
-## Issues (3)
-
-1. **Submit button pre-disabled on pristine forms** — Deposit form submit button is disabled on page load even if all required fields (principal, rate, start date) are legitimately empty. This forces the user to trigger validation on at least one required field before they can see why submit is disabled. Recommend validating only on touch or showing disabled-reason hints.
-
-2. **Filter pill + search result count asymmetry** — Result count updates only when pills are clicked, not when search text alone changes. Result count line should refresh on both pill click and search input change to stay in sync with list re-render.
-
-3. **Validation icon rendering** — Icons are created and appended to field parent elements every time `setFieldState()` runs. If `setFieldState()` is called multiple times (e.g., on repeated input events), existing icon will be removed and a new one appended, causing DOM thrashing. Consider creating icon elements once per field during form init and toggling visibility/content instead of recreating.
+The critical gaps are: (1) SESSION_SECRET can easily remain a dev placeholder in production, (2) the startup migration silently assigns data without consent, (3) password requirements are weak (6 characters vs. industry standard 12+), and (4) there is no TLS/HTTPS configuration or warning in the auth routes, making credentials vulnerable over unencrypted connections.
 
 ---
 
 <details>
-<summary>Details</summary>
+<summary>Issues (5)</summary>
 
-### Loading Skeletons: CSS Animation and Integration
+1. **SESSION_SECRET placeholder** — The secret is hardcoded to a default dev value with a comment saying "change-in-prod" but nothing enforces or warns if it wasn't changed. Production deployments must use a strong random secret via environment variable, and the code should error on startup if the default is detected in production.
 
-Skeleton loaders are defined in CSS with `.skeleton` base class and `.skeleton-shimmer` keyframe animation. The shimmer moves a linear gradient left-to-right over 1.5 seconds, creating a perceived loading effect. Skeleton cells are sized with flex classes (small/medium/large) and stacked in rows via `.skeleton-row` layout.
+2. **Startup migration assigns data without consent** — The `runStartupMigration()` function silently links all unowned members/goals to the first user who signs up, then never runs again. Users are not told their existing data was claimed during signup. A migration this consequential should be explicit: either warn the user during signup ("Found X existing members; link them to your account?") or run it interactively on first login.
 
-In app.js, two helper functions manage skeleton rendering:
-- `showSkeletons(containerId, rows=5, cols=3)` fills a container with generic skeleton rows (used for dashboard table).
-- `showInvListSkeletons(containerId, count=4)` creates skeleton rows matching investment card height (used for PF/NPS/SIP lists).
+3. **Password minimum is 6 characters** — OWASP recommends 12+ characters for sensitive accounts. A 6-character password is vulnerable to brute force, especially if the user reuses it across sites. Require at least 12 characters; show password strength guidance on the signup form.
 
-The FD list calls `showSkeletons('fdList', 4, 1)` inside `renderFDList()` before filtering and rendering, meaning skeletons appear for ~100ms while JS processes the list. This is correct—the skeleton placeholder gives instant visual feedback, then real data or empty state replaces it. No performance issues; the skeleton render-and-replace pattern is sound.
+4. **No HTTPS/TLS enforcement** — Session cookies are marked secure only in production (when NODE_ENV='production'), but there is no code to enforce HTTPS on the server or warn if running over HTTP. Credentials sent over plaintext HTTP are trivially intercepted. Production deployments must enforce HTTPS at the server level, or add a middleware that rejects HTTP requests in production.
 
-**Verified:** CSS `.skeleton` class exists with shimmer animation. Skeleton helper functions are called at the correct lifecycle points (start of render, before data display). Dashboard table and investment lists all show skeletons on first load and when navigating between pages.
+5. **No security awareness messaging** — The auth UI shows no guidance about password strength, browser security, or HTTPS. Add messaging on signup about password strength, and consider a security tips banner in the app (e.g., "Never share your password; clear browser cache when done on shared devices").
 
-### Empty State Component: Rendering and CTA Dispatch
+</details>
 
-The `renderEmptyState(icon, heading, desc, ctaLabel, ctaAction, tip)` function generates HTML for a centered card with icon, heading, description, CTA button, and optional tip. The function creates a unique `data-action` ID for the button and stores the callback in `window._emptyStateActions[id]`. A global click listener fires the callback when any element with class `.empty-state-cta` is clicked.
+---
 
-Empty states are used in:
-- **Member list** (icon 👨‍👩‍👧‍👦): Focus on memberName input
-- **FD list** (icon 💰): Navigate to deposits page and focus member dropdown
-- **Account list** (icon 🏛): Focus on bank input
-- **PF/NPS/SIP lists** (icons 🏗/🎯/📈): Similar focus patterns
+## Password Security and Hashing
 
-This pattern works and the CTA callbacks are correctly bound. However, the global action registry is an indirect dispatch mechanism. A more direct approach would use element IDs or data attributes on the CTA button itself (e.g., `data-cta-target="memberName"` with a built-in focus handler), reducing the need for stored closures. The current approach is functional but adds a layer of indirection that could be source of confusion if CTAs are added dynamically.
+The signup route hashes passwords with `bcrypt.hash(password, 12)`, setting saltRounds to 12. This is confirmed (**confirmed**): salting rounds are adequate and follow bcrypt best practices. Passwords are never logged, never echoed back in responses, and only the hash is stored. Lookup is correct: the password hash is fetched from the database, then compared using `bcrypt.compare()` against the user input.
 
-**Verified:** All empty state HTML renders correctly. CTA buttons are wired and fire callbacks. No console errors on CTA clicks. Focus management works (member form name field, deposit form member dropdown).
+The weakness is the minimum length requirement. The code enforces `password.length < 6` and rejects with a 400 error, but 6 characters is the lower bound of what existing password databases can crack in hours on consumer hardware. Require 12 characters minimum, and show a strength meter or guidance on the signup form to guide users toward longer, varied passwords. The frontend already has a placeholder for password strength indication; use it.
 
-### Filter Pills: Status Filtering and Result Count
+---
 
-Filter pills are rendered in HTML with buttons for "All", "Active", "Maturing Soon", "Matured". The `setupFilterPills()` function attaches click listeners to each pill. On click, the listener updates `fdActiveFilter` global state and calls `renderFDList(fdCurrentSearch)`, which re-applies both search and status filter together.
+## Session Management and Cookies
 
-Inside `renderFDList()`, after filtering by search text, the function applies the status filter:
+Session middleware is configured with `httpOnly: true`, which prevents client-side JavaScript from accessing the cookie. This is correct (**confirmed**): it defeats XSS attacks that try to steal the session token. The `secure` flag is set conditionally: `secure: process.env.NODE_ENV === 'production'`. In production (NODE_ENV=production), the flag is true, meaning the browser will only send the cookie over HTTPS. This is correct, but the server does not enforce HTTPS; see the HTTPS enforcement issue below.
+
+Session expiry is set to 7 days (604800000 ms). This is reasonable for a personal finance app; a shorter window (e.g., 1 day) would be more conservative but less convenient for regular users.
+
+Logout correctly calls `req.session.destroy()` and clears in-memory state on the frontend. Sessions are not explicitly validated on each request beyond the middleware's internal handling, which is fine: if a session expires or is destroyed, the middleware will treat req.session.userId as undefined, and requireAuth will reject with 401.
+
+---
+
+## Password Validation and Strength
+
+The signup route validates:
+- email required, not empty
+- password required, not empty
+- password.length >= 6 (weak requirement)
+- email format with a basic regex: `/^[^\s@]+@[^\s@]+\.[^\s@]+$/` (**confirmed**)
+- duplicate email check: queries for existing user with same email, returns 409 if found (**confirmed**)
+
+The email format regex is minimal but sufficient for detecting obviously malformed addresses; it does not need to be RFC 5321-compliant for a personal app.
+
+The critical gap: 6 characters is too short. Change to 12+ and add frontend guidance. The frontend form already says "At least 6 characters" in the password field placeholder; update both the backend validation and the UI message.
+
+---
+
+## Authentication API Responses
+
+Signup and login endpoints return the user object with `id`, `email`, and `displayName`. Passwords are never returned (**confirmed**). Password hashes are never returned (**confirmed**).
+
+The /api/auth/me endpoint returns the authenticated user's id, email, and displayName, fetched from the database. It correctly checks if the user exists after session validation, and returns 401 if not found (defensive check against race conditions or deleted accounts). The query selects only id, email, display_name; the password_hash is excluded (**confirmed**).
+
+---
+
+## Data Isolation: Member and Sub-resource Filtering
+
+All protected endpoints begin with `requireAuth`, which checks `req.session.userId` and returns 401 if missing.
+
+**Members endpoint** (`GET /api/members`): Queries `SELECT * FROM members WHERE user_id=$1 ORDER BY created_at ASC` with the authenticated user's ID. Only that user's members are returned. (**confirmed**)
+
+**Accounts endpoint** (`GET /api/accounts`): Queries `SELECT * FROM accounts WHERE member_id IN (SELECT id FROM members WHERE user_id=$1)`. This correctly restricts accounts to members owned by the authenticated user. (**confirmed**)
+
+**Deposits endpoint** (`GET /api/deposits`): Queries `SELECT * FROM deposits WHERE member_id IN (SELECT id FROM members WHERE user_id=$1)`. Correct (**confirmed**).
+
+**PF endpoint** (`GET /api/pf`): Queries `SELECT * FROM pf_accounts WHERE member_id IN (SELECT id FROM members WHERE user_id=$1)`. Correct (**confirmed**).
+
+**NPS endpoint** (`GET /api/nps`): Queries `SELECT * FROM nps_accounts WHERE member_id IN (SELECT id FROM members WHERE user_id=$1)`. Correct (**confirmed**).
+
+**SIP endpoint** (`GET /api/sip`): Queries `SELECT * FROM sip_investments WHERE member_id IN (SELECT id FROM members WHERE user_id=$1)`. Correct (**confirmed**).
+
+**Others endpoint** (`GET /api/others`): Queries `SELECT * FROM other_records WHERE member_id IN (SELECT id FROM members WHERE user_id=$1)`. Correct (**confirmed**).
+
+**Goals endpoint** (`GET /api/goals`): Queries `SELECT * FROM goals WHERE user_id=$1`. Goals are directly owned by users, so filtering by user_id is correct. (**confirmed**)
+
+**POST endpoints**: Before inserting, endpoints verify ownership of the member using `checkMemberOwnership(memberId, userId)`, which queries for the member and compares its user_id to the authenticated user's ID. This is implemented consistently across all member-child resources. (**confirmed**)
+
+**PUT/DELETE endpoints**: All verify ownership before allowing modifications. For example, `PUT /api/deposits/:id` fetches the deposit, checks its member belongs to the user, then updates. (**confirmed**)
+
+One asymmetry: accounts can be deleted and their links to deposits are cleared (UPDATE deposits SET linked_account_id='' WHERE linked_account_id=$1), but the linked account is not re-assigned to another account. This is a UX issue, not a security issue—users can re-link deposits manually.
+
+---
+
+## SQL Injection Prevention
+
+All queries use parameterized queries with `$1`, `$2`, etc., and pass parameters as separate array arguments. No string concatenation or template literals are used in SQL construction. This is correct across all endpoints. (**confirmed**)
+
+One minor concern: the LIMIT clause in `/api/history` uses `LIMIT ${params.length + 1}`, which constructs the clause dynamically. However, the value comes from `parseInt(req.query.limit)` with a default of 200. If parseInt fails, it returns NaN, which would break the LIMIT clause in PostgreSQL but not in sql.js. The code should validate `limit` explicitly: ensure it is a positive integer between 1 and a reasonable max (e.g., 1000), then use parameterized query or a whitelist approach. (**likely** SQL injection vector via malformed limit parameter; low risk if limit is never a user-controlled string, but validate it).
+
+---
+
+## Cross-Site Request Forgery (CSRF) Protection
+
+No CSRF token is implemented. Session-based authentication is vulnerable to CSRF if a user visits a malicious site while logged in; the browser will send their session cookie with any request to the portfolio manager, potentially allowing the attacker to make changes on behalf of the user.
+
+However, CSRF protection is only necessary if the app is accessed in a browser where cookies are sent automatically. Since the API uses POST/PUT/DELETE with JSON body, most modern browsers will send a preflight OPTIONS request first, which the malicious site cannot forge without the app explicitly allowing cross-origin requests. The app does not set CORS headers (Access-Control-Allow-Origin, etc.), so cross-origin requests are blocked by default. (**confirmed**: no CORS headers visible in the code).
+
+For same-origin requests from the legit UI, CSRF is a risk if the frontend form could be tricked into submitting. The frontend uses fetch() with body: JSON.stringify(), which requires JavaScript to construct, so a simple form-based CSRF attack fails. However, a more sophisticated attack could still be mounted from a script on a third-party site if the app is embedded in a frame.
+
+For a single-user app deployed internally or used on a personal device, CSRF risk is low. For a beta release to untrusted users, add CSRF token protection: generate a token on signup/login, return it in the auth response, and require it in the Authorization header or a custom header (not a cookie) on mutating requests. Alternatively, add CORS restrictions: only allow requests from the app's own domain, and reject cross-origin requests.
+
+For now: (**likely** CSRF risk on untrusted networks or multi-user environments; low risk for single-user personal app).
+
+---
+
+## Frontend Auth Flow and State Management
+
+The frontend calls `checkAuth()` on page load. If /api/auth/me returns 200, it shows the app and loads data. If not, it shows the auth screen. Login/signup forms submit via fetch() with JSON body, then set `currentUser` and call `showApp()` if successful. Logout destroys the session, clears `currentUser`, and shows the auth screen again. (**confirmed**)
+
+The auth screen has a toggle between login and signup tabs. The signup form clears after successful signup and switches to login before showing the app. This is a usability issue (user expects to be logged in after signup) but not a security issue. Consider logging the user in directly after successful signup instead of forcing them to switch tabs.
+
+Error messages are shown to users if login or signup fails (e.g., "Invalid email or password", "Email already registered", "Password must be at least 6 characters"). These are appropriate; they don't leak information that would help attackers enumerate valid emails.
+
+---
+
+## Startup Migration: Silent Data Claiming
+
+The most consequential security/privacy issue is `runStartupMigration()`. This function runs once on server boot:
+
 ```javascript
-if(fdActiveFilter && fdActiveFilter!=='all'){
-  if(fdActiveFilter==='maturing'){
-    fds=fds.filter(f=>f.status==='soon');
-  } else {
-    fds=fds.filter(f=>f.status===fdActiveFilter);
+async function runStartupMigration() {
+  try {
+    const userCount = await queryOne('SELECT COUNT(*) as n FROM users', []);
+    const count = userCount?.n || 0;
+    
+    if (count === 1) {
+      const user = await queryOne('SELECT id FROM users LIMIT 1', []);
+      if (user) {
+        await run('UPDATE members SET user_id=$1 WHERE user_id IS NULL OR user_id=\'\'', [user.id]);
+        await run('UPDATE goals SET user_id=$1 WHERE user_id IS NULL OR user_id=\'\'', [user.id]);
+      }
+    }
+  } catch (err) {
+    console.log('ℹ️ Startup migration skipped...');
   }
 }
 ```
 
-Status values in enriched FDs are computed by `fdStatus()` which maps date differences to 'active', 'soon' (maturing), or 'matured'. The pill filter logic correctly maps 'maturing' pill to 'soon' status. After filtering, result count is updated: `resultCount.textContent=fds.length+' FD'+(fds.length!==1?'s':'')+' found'`.
+This silently assigns all unowned members and goals to the first user who signs up. The user is not told this happened. If the app is deployed with demo data (via seedDemo), the first real user to sign up will automatically own Rajesh Kumar, Sunita Kumar, Ravi Kumar, and all their financial records—without being asked.
 
-The result count updates on pill click (via `renderFDList()` call) and on search input change (listener calls `renderFDList()` with new search text). CSS for pills is correct: `.pill.active` uses blue background and white text; inactive pills have gray border and dark text. Hover states work.
+This is a serious privacy concern: the user may not realize they have other people's data, or they may be confused about why the app shows records they didn't create. In a multi-user future, this creates ambiguity about who owns what data.
 
-**Gap: Result count does not update if search text changes without a pill click.** The search input listener at line ~1045 does call `renderFDList(fdCurrentSearch)`, which should trigger result count update. However, if the user types in search with a pill already selected (not 'all'), the result count updates correctly because `renderFDList()` re-applies both filters. Testing confirms: type "HDFC", result count updates; click pill, result count updates. This is working as implemented, though the behavior could be more explicit.
+**Recommendation**: Make the migration explicit. Options:
 
-**Verified:** Pills toggle active state correctly. Filter logic combines search + pill status. Result count displays and updates. No console errors when clicking pills or filtering.
+1. **During signup**: After account creation, query for unowned members. If any exist, show a dialog: "Found X existing records. Do you want to link them to your account?" Let the user choose. If yes, update them. If no, leave them unowned (or archive them).
 
-### Member Form Validation
+2. **On first login**: After auth succeeds and user loads the app, check for unowned members. Show a banner: "Found X records not linked to any user. Would you like to link them to your account?" with Yes/No buttons.
 
-Member form fields are: memberName (required, 2–100 chars), memberPan (optional, 10-char PAN format if provided), memberPhone (optional, 10-digit Indian format if provided), memberEmail (optional, valid email if provided), plus memberRelation (required, dropdown—no client validation), memberNotes (free text).
+3. **Remove the migration entirely**: Only let users create their own records. If existing records are needed for demo purposes, pre-assign them to a demo user or mark them as read-only.
 
-Validation functions:
-- `validateMemberField(fieldId)` — validates single field, checks `data-touched` flag, returns boolean, calls `setFieldState()` to update UI.
-- `validateMemberForm()` — returns true if name is valid and optional fields (if provided) are valid format.
-- `setupMemberFormValidation()` — attaches `input` and `blur` listeners to all fields, sets `data-touched=true` on first interaction, updates submit button disabled state.
+For a beta release, option 1 is cleanest: users expect to see their data after signup, so making the claiming explicit during signup (with a clear message) is the most honest approach.
 
-Validation flow is correct: name must be 2–100 chars; PAN must match `/^[A-Z]{5}[0-9]{4}[A-Z]$/` or be empty; phone must be 10 digits or empty; email must be valid format or empty. No validation fires on page load. Only required field is name (and relation dropdown, but no JS validation). Optional fields validate format only if user enters a value.
-
-**Verified:** Member form submit button is initially enabled (no required field validation on load). On blur of name field, validation fires. If name < 2 chars, border turns red, error message "Name must be 2-100 characters" appears, submit button disables. After fixing, border turns green, message clears, submit button enables. PAN validation works (5 letters + 4 digits + 1 letter). Phone validation rejects non-10-digit input. Email validation rejects invalid formats.
-
-**Issue: Validation icons are created and appended every time `setFieldState()` is called.** In `setFieldState()`, the code removes any existing `.validation-icon` and creates a new one if valid/invalid. On repeated `input` events, this causes the icon to be removed and re-appended. Not a blocker—the DOM operations are fast and not in a loop—but inefficient. A one-time icon creation during form setup (hidden by default) with class toggle on validation would be cleaner.
-
-### Deposit Form Validation
-
-Deposit form fields are: fdMember (required, dropdown), fdLinkedAccount (optional), fdBank (required), fdAccountNo (optional), fdPrincipal (required, > 0), fdRate (required, > 0), fdStartDate (required, valid date), fdTenureYears/Months/Days (optional, used to calc maturity if manual date not set), fdMaturityDate (optional, overrides tenure), fdPayout (optional, dropdown), fdNominee (optional, dropdown), fdNotes (optional).
-
-Validation functions:
-- `validateDepositField(fieldId)` — validates principal, rate, start date, maturity date (if set). Checks `data-touched` flag and fires only after user touches field.
-- `validateDepositForm()` — returns true if principal > 0, rate > 0, start date is valid date.
-- `setupDepositFormValidation()` — attaches listeners, manages touched flag, updates submit button.
-
-Validation rules:
-- Principal: must be > 0 (enforced by HTML `min="1"` and JS check).
-- Rate: must be > 0.
-- Start date: must be valid date.
-- Maturity date (if set): must be after start date.
-
-**Issue: Submit button disabled on pristine deposit form.** On page load, the form is untouched, but `setupDepositFormValidation()` calls `updateButtonState()` which invokes `validateDepositForm()`. Since principal, rate, and start date are empty on load, the form is invalid and submit button is disabled. The button remains disabled until the user enters all three required fields. This is correct behavior per the plan, but it means users see a disabled button without clear indication of why. Recommend showing a hint (e.g., "Fill in required fields") or only disabling after first touch.
-
-**Gap: Result count for filtered FDs.** The deposit form validation works independently; this is not a gap in the deposit form itself, but the "result count" for filtered FDs (line ~1001) only updates on pill click or search input, not on form state changes (which is correct—form changes should not trigger filter updates).
-
-**Verified:** Deposit form principal validation: enter 0, blur, error "Principal must be greater than 0", submit disabled. Enter 100000, blur, error clears, submit enables (if other required fields also valid). Rate validation: enter 0, error. Start date validation: pick invalid date, error. Maturity date must be after start date: pick maturity before start, error. All validation icons and borders render correctly.
-
-### No Regressions: Existing Functionality
-
-All existing form submit handlers (`familyForm`, `acctForm`, `fdForm`) remain intact. Form submission still validates data server-side and sends API requests. Navigation buttons still work; no new navigation paths were broken. Dashboard still loads and renders. FD list search (without pills) still works—search input changes trigger `renderFDList()` with search text, preserving existing behavior.
-
-**Verified:** Navigate between all pages (Dashboard, Family, Accounts, Deposits, PF, NPS, SIP). Add member via form submit, toast success appears, member renders in list. Edit member, changes persist. Add FD, FD appears in dashboard table and deposits list. Delete FD with confirmation. Search FDs by bank name and text—results filter correctly. All CRUD operations work without console errors.
-
-### Form Validation: Icon and Error Message Rendering
-
-Validation icons (✓ or ✗) are created as `<span class="validation-icon">` elements with color set inline. Error messages are rendered in `<div class="field-hint error">` below the input. CSS includes `.field-hint { display: none; }` and `.field-hint.error { display: block; color: var(--red); }`, so hints only appear when invalid.
-
-Input borders change color: `.form-group input.valid` gets `border-color: var(--green)` and `.form-group input.invalid` gets `border-color: var(--red)`. The CSS selectors target the input inside `.form-group`, which matches the HTML structure.
-
-**Verified:** Valid field: green border, ✓ icon, no error message. Invalid field: red border, ✗ icon, error message below. Disabled submit button has `opacity: 0.5` and `cursor: not-allowed`. No style conflicts with existing form styles.
-
-</details>
+(**confirmed** issue: migration code silently updates members/goals).
 
 ---
 
+## HTTPS and Secure Transport
+
+There is no enforcement of HTTPS in the server code. The session cookie is marked `secure` only if `NODE_ENV === 'production'`, but the server doesn't enforce HTTPS itself. If a production deployment receives an HTTP request (e.g., http://example.com:3000), the server will respond without redirecting to HTTPS, and the secure cookie won't be sent by the browser (because it's not HTTPS), but the request itself is unencrypted.
+
+To fix: Add middleware that redirects HTTP to HTTPS in production, or add a check that rejects HTTP in production. For example:
+
+```javascript
+app.use((req, res, next) => {
+  if (process.env.NODE_ENV === 'production' && req.protocol !== 'https') {
+    return res.redirect(301, 'https://' + req.get('host') + req.url);
+  }
+  next();
+});
+```
+
+Alternatively, if the app is deployed behind a reverse proxy (nginx, load balancer), the proxy should handle HTTPS termination and set X-Forwarded-Proto header, and the app can check that header.
+
+The absence of HTTPS enforcement is a **HIGH** severity issue for production: credentials are transmitted over plaintext HTTP if the user visits the wrong URL.
+
+(**likely** unencrypted credentials in production if HTTP is not explicitly disabled).
+
+---
+
+## Testing and Validation
+
+The codebase includes client-side form validation for some fields (memberName, memberPan, memberPhone, memberEmail, fdPrincipal, fdRate, fdStartDate) with error messages and a disabled submit button if validation fails. This is good UX but does not substitute for server-side validation.
+
+Server-side validation is minimal: email and password validation on signup/login, required field checks on member and deposit creation. No validation is **tested** (no test suite exists). For a beta release, at minimum test:
+
+- Signup with invalid email (should reject)
+- Signup with password < 6 chars (should reject; change to 12+ and test)
+- Signup with duplicate email (should reject with 409)
+- Duplicate member name for same user (should allow; users can have multiple family members with same name)
+- Member from user A accessing member from user B via API (should return 403)
+- Deposit from user A accessing deposit linked to member from user B (should return 403)
+- Logout clears session and blocks subsequent API calls (should return 401)
+- Passwords are never logged or returned (should verify in server logs)
+
+(**likely** insufficient test coverage for auth flows; no automated tests exist).
+
+---
+
+## Not Tested: Scenarios and Edge Cases
+
+- **Concurrent signups**: If two users sign up simultaneously (before first-user migration runs), which one claims the demo data? The code checks `if (count === 1)` in the migration, so if both users insert simultaneously, one might see count as 1 and claim the data, while the second sees count as 2 and skips the migration. This is racy in PostgreSQL without explicit locking, but unlikely in practice.
+
+- **Explicit logout on other tabs**: If a user logs out in one tab, other open tabs still have `currentUser` set and will show the app until they try to make an API call. The API will return 401, but the UI won't refresh to show the auth screen. This is a minor UX issue.
+
+- **Session expiry**: If a session expires (after 7 days) while the app is open, the next API call returns 401, but the UI doesn't show a clear message telling the user to re-authenticate. The error is shown as a generic toast, not as a redirect to login.
+
+- **Password reset**: There is no password reset flow. If a user forgets their password, they cannot recover their account. For a beta release, either add a password reset flow (email-based) or document that they'll need to contact admin to delete and recreate the account.
+
+- **Email verification**: Signup does not verify that the email address is valid or that the user controls it. A user could sign up with a typo or a non-existent email. No recovery is possible. Consider adding email verification on signup: generate a token, send a verification link, and mark the account as verified only after the user clicks it. Until then, the account is locked or limited.
+
+---
+
+## Recommendations for Beta Release
+
+1. **Enforce minimum 12-character passwords** instead of 6. Update backend validation and frontend placeholder.
+
+2. **Make the startup migration explicit** by prompting the user during signup or on first login. Show them how many records were found and ask before claiming them.
+
+3. **Add HTTPS enforcement** via middleware or deployment proxy. Reject HTTP in production, or redirect to HTTPS.
+
+4. **Set a strong SESSION_SECRET** in production. Add a startup check that errors if the default dev secret is detected in production (check NODE_ENV and SECRET value).
+
+5. **Add password reset flow** via email, or document that password recovery requires admin intervention.
+
+6. **Test auth flows** with automated tests: signup, login, logout, 403 for access to other users' data, 401 for expired sessions.
+
+7. **Add session expiry handling** on the frontend: detect 401 responses and show a clear message to re-authenticate, then redirect to login.
+
+8. **Add security tips** to the auth screen: "Choose a strong password", "Never share your password", "Clear browser cache on shared devices."
+
+---
+
+## What's Working Well
+
+- Bcrypt with saltRounds 12 is a solid choice for password hashing.
+- Session-based auth with httpOnly cookies is a standard, proven approach.
+- Data filtering via subqueries (member-in-user query pattern) is a reliable way to enforce isolation.
+- API ownership checks (checkMemberOwnership) are applied consistently across all member-child resources.
+- No SQL injection vectors detected in current code (all queries use parameterized syntax).
+- Error messages don't leak sensitive info (e.g., "Invalid email or password" instead of "Email not found").
+- Password hashes and secrets are never logged or echoed.
+
+---
+
+## File Map
+
 <details>
-<summary>File Map</summary>
+<summary>Files Changed (6)</summary>
 
-- **index.html** — Added filter pills row HTML below `#fdSearch` with data-filter attributes on pill buttons. No existing functionality altered; pills are positioned in the deposits page section.
-- **style.css** — Added 20+ new CSS classes: `.skeleton`, `.skeleton-row`, `.skeleton-cell`, `.empty-state*` (5 classes), `.filter-pills`, `.pill`, `.pill.active`, `.form-field-*` (5 classes), `.field-hint*`, `.validation-icon`, button disabled styling. All new classes use existing CSS variables; no color conflicts.
-- **app.js** — Added utility functions: `showSkeletons()`, `showInvListSkeletons()`, `renderEmptyState()`, `setFieldState()`, `validateMemberField()`, `validateMemberForm()`, `setupMemberFormValidation()`, `validateDepositField()`, `validateDepositForm()`, `setupDepositFormValidation()`, `setupFilterPills()`. Added global state: `fdActiveFilter`, `fdCurrentSearch`. Updated `renderFDList()`, `renderMemberList()`, `renderAcctList()`, `renderPFList()`, `renderNPSList()`, `renderSIPList()` to show skeletons and render empty states. Form listeners remain unchanged; validation init called on page init or when form mounts.
-
-**Full diff scope:** All changes are file additions (CSS classes, JS functions) or mutations to render functions (prepend skeleton, replace empty text with empty state component, add filter pill listeners). No refactoring of existing API layer or data model.
+- **server.js**: Added auth routes (signup, login, logout, me), session middleware, requireAuth guard, ownership checks, and startup migration.
+- **src/db.js**: Added users table schema, startup migration function (runStartupMigration), added user_id columns to members and goals.
+- **public/index.html**: Added auth screen with login/signup forms and tabs.
+- **public/style.css**: Added auth screen styles (auth-screen, auth-card, auth-tabs, etc.).
+- **public/app.js**: Added auth state (currentUser), checkAuth on load, login/signup handlers, logout, auth error display, showApp/showAuthScreen functions.
 
 </details>
+
+Full diff: `git diff main`
+
+---
+

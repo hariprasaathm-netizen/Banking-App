@@ -1,17 +1,59 @@
 {
-  "verdict": "APPROVED",
+  "verdict": "CHANGES_REQUESTED",
   "findings": [
     {
-      "label": "Submit button pre-disabled on pristine forms",
-      "description": "Deposit form submit button is disabled on page load even if all required fields are legitimately empty. This forces the user to trigger validation on at least one required field before they can see why submit is disabled. Recommend validating only on touch or showing disabled-reason hints."
+      "severity": "HIGH",
+      "category": "Session Security",
+      "title": "SESSION_SECRET placeholder not enforced in production",
+      "description": "The session secret defaults to a dev value with a comment saying 'change-in-prod', but there is no check to prevent it from being used in production. If deployed with the default secret, session tokens can be forged. Production deployments must use a strong random secret via environment variable, and the code should error on startup if running in production with the default."
     },
     {
-      "label": "Filter pill + search result count asymmetry",
-      "description": "Result count updates only when pills are clicked, not when search text alone changes. Result count line should refresh on both pill click and search input change to stay in sync with list re-render."
+      "severity": "HIGH",
+      "category": "Transport Security",
+      "title": "No HTTPS enforcement on server",
+      "description": "The server does not enforce HTTPS or redirect HTTP to HTTPS. Session cookies are marked secure only when NODE_ENV='production', but the server itself accepts unencrypted HTTP requests. Credentials transmitted over HTTP are trivially intercepted. Add middleware to reject or redirect HTTP in production."
     },
     {
-      "label": "Validation icon rendering inefficiency",
-      "description": "Icons are created and appended to field parent elements every time setFieldState() runs. If setFieldState() is called multiple times (e.g., on repeated input events), existing icon will be removed and a new one appended, causing DOM thrashing. Consider creating icon elements once per field during form init and toggling visibility/content instead of recreating."
+      "severity": "MEDIUM",
+      "category": "Privacy/UX",
+      "title": "Startup migration silently claims unowned data without consent",
+      "description": "The runStartupMigration() function automatically links all unowned members/goals to the first user who signs up, without notifying them. If deployed with demo data, the first real user will own Rajesh Kumar, Sunita Kumar, and other test records without being asked. This is confusing and raises privacy concerns. Make the migration explicit: prompt during signup or on first login to ask if the user wants to claim existing records."
+    },
+    {
+      "severity": "MEDIUM",
+      "category": "Authentication",
+      "title": "Weak password minimum (6 characters)",
+      "description": "The password validation accepts 6 characters as minimum, which is below OWASP recommendations (12+). 6-character passwords are vulnerable to brute force attacks. Require at least 12 characters and add strength guidance on the signup form."
+    },
+    {
+      "severity": "MEDIUM",
+      "category": "SQL Injection",
+      "title": "LIMIT parameter in /api/history may not be validated",
+      "description": "The /api/history endpoint constructs the LIMIT clause dynamically using parseInt(req.query.limit). If parseInt fails, it returns NaN, potentially breaking the query. Validate limit explicitly: ensure it is a positive integer between 1 and a max (e.g., 1000), then use parameterized query or whitelist."
+    },
+    {
+      "severity": "LOW",
+      "category": "Testing",
+      "title": "No automated test coverage for auth flows",
+      "description": "There are no tests for signup, login, logout, data isolation, or ownership checks. For a beta release, add tests for: invalid email/password, duplicate signup, cross-user access (should be blocked), session expiry, and password handling."
+    },
+    {
+      "severity": "LOW",
+      "category": "UX/Security Awareness",
+      "title": "No security messaging or password strength guidance",
+      "description": "The auth UI shows no guidance about password strength, browser security, or HTTPS. Add messaging on signup about password requirements and best practices (e.g., 'Never share your password', 'Clear browser cache on shared devices')."
+    },
+    {
+      "severity": "LOW",
+      "category": "Feature Gap",
+      "title": "No password reset flow",
+      "description": "If a user forgets their password, they cannot recover their account. Add a password reset flow (email-based), or document that password recovery requires admin intervention."
+    },
+    {
+      "severity": "LOW",
+      "category": "Feature Gap",
+      "title": "No email verification on signup",
+      "description": "Users can sign up with any email address without verification. A user could typo their email and lock themselves out of recovery. Consider adding email verification: generate a token, send a verification link, and mark the account as verified only after clicking it."
     }
   ],
   "reviewDoc": "c:\\Users\\Harip\\Downloads\\Bank-App\\fd-portfolio\\.agents\\tasks\\review.md"

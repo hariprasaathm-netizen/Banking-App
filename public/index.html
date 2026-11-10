@@ -8,6 +8,61 @@
 </head>
 <body>
 
+  <!-- ===== AUTH SCREEN ===== -->
+  <div id="authScreen" class="auth-screen">
+    <div class="auth-card">
+      <div class="auth-header">
+        <span class="auth-icon">🏦</span>
+        <h1>Portfolio Manager</h1>
+        <p class="auth-subtitle">Manage your family's finances</p>
+      </div>
+      
+      <div class="auth-tabs">
+        <button class="auth-tab-btn active" data-tab="login">Login</button>
+        <button class="auth-tab-btn" data-tab="signup">Sign Up</button>
+      </div>
+      
+      <!-- Login Tab -->
+      <div id="loginTab" class="auth-tab active">
+        <form id="loginForm">
+          <div class="form-group">
+            <label for="loginEmail">Email</label>
+            <input type="email" id="loginEmail" name="email" required placeholder="your@email.com" />
+          </div>
+          <div class="form-group">
+            <label for="loginPassword">Password</label>
+            <input type="password" id="loginPassword" name="password" required placeholder="••••••••" />
+          </div>
+          <button type="submit" class="auth-submit-btn">Login</button>
+        </form>
+      </div>
+      
+      <!-- Signup Tab -->
+      <div id="signupTab" class="auth-tab">
+        <form id="signupForm">
+          <div class="form-group">
+            <label for="signupName">Display Name</label>
+            <input type="text" id="signupName" name="displayName" placeholder="Your Name" />
+          </div>
+          <div class="form-group">
+            <label for="signupEmail">Email</label>
+            <input type="email" id="signupEmail" name="email" required placeholder="your@email.com" />
+          </div>
+          <div class="form-group">
+            <label for="signupPassword">Password</label>
+            <input type="password" id="signupPassword" name="password" required placeholder="At least 6 characters" />
+          </div>
+          <button type="submit" class="auth-submit-btn">Sign Up</button>
+        </form>
+      </div>
+      
+      <div id="authError" class="auth-error hidden"></div>
+      <div id="authLoading" class="auth-loading hidden">
+        <p>Loading...</p>
+      </div>
+    </div>
+  </div>
+
   <!-- ===== LOADING OVERLAY ===== -->
   <div id="loadingOverlay" class="modal-overlay hidden">
     <div style="text-align:center;padding:2rem">
@@ -40,6 +95,7 @@
     <div style="display:flex;gap:.5rem">
       <button class="btn-export" id="exportBtn">⬇ Export CSV</button>
       <button class="btn-export" id="importBtn">⬆ Import CSV</button>
+      <button class="btn-export" id="logoutBtn" style="display:none">🚪 Logout</button>
     </div>
   </header>
 

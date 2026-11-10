@@ -20,6 +20,15 @@ function uid() {
 
 // ── Schema definitions ──────────────────────────────────────
 const SCHEMA = `
+  CREATE TABLE IF NOT EXISTS users (
+    id TEXT PRIMARY KEY,
+    email TEXT UNIQUE NOT NULL,
+    password_hash TEXT NOT NULL,
+    display_name TEXT DEFAULT '',
+    is_admin INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+  );
+
   CREATE TABLE IF NOT EXISTS members (
     id        TEXT PRIMARY KEY,
     name      TEXT NOT NULL,
@@ -28,7 +37,8 @@ const SCHEMA = `
     phone     TEXT DEFAULT '',
     email     TEXT DEFAULT '',
     notes     TEXT DEFAULT '',
-    created_at TEXT DEFAULT NOW()
+    user_id   TEXT DEFAULT '',
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
   );
 
   CREATE TABLE IF NOT EXISTS accounts (
@@ -43,7 +53,7 @@ const SCHEMA = `
     open_date        TEXT DEFAULT '',
     is_primary       INTEGER DEFAULT 0,
     notes            TEXT DEFAULT '',
-    created_at       TEXT DEFAULT NOW()
+    created_at       TEXT DEFAULT CURRENT_TIMESTAMP
   );
 
   CREATE TABLE IF NOT EXISTS deposits (
@@ -63,7 +73,7 @@ const SCHEMA = `
     payout            TEXT DEFAULT 'cumulative',
     nominee_id        TEXT DEFAULT '',
     notes             TEXT DEFAULT '',
-    created_at        TEXT DEFAULT NOW()
+    created_at        TEXT DEFAULT CURRENT_TIMESTAMP
   );
 `;
 
@@ -79,7 +89,7 @@ const SCHEMA2 = `
     interest_rate    REAL DEFAULT 8.25,
     join_date        TEXT DEFAULT '',
     notes            TEXT DEFAULT '',
-    created_at       TEXT DEFAULT NOW()
+    created_at       TEXT DEFAULT CURRENT_TIMESTAMP
   );
 
   CREATE TABLE IF NOT EXISTS nps_accounts (
@@ -95,7 +105,7 @@ const SCHEMA2 = `
     nav              REAL DEFAULT 0,
     start_date       TEXT DEFAULT '',
     notes            TEXT DEFAULT '',
-    created_at       TEXT DEFAULT NOW()
+    created_at       TEXT DEFAULT CURRENT_TIMESTAMP
   );
 
   CREATE TABLE IF NOT EXISTS sip_investments (
@@ -113,7 +123,7 @@ const SCHEMA2 = `
     nav              REAL DEFAULT 0,
     is_active        INTEGER DEFAULT 1,
     notes            TEXT DEFAULT '',
-    created_at       TEXT DEFAULT NOW()
+    created_at       TEXT DEFAULT CURRENT_TIMESTAMP
   );
 
   CREATE TABLE IF NOT EXISTS other_records (
@@ -124,7 +134,7 @@ const SCHEMA2 = `
     amount           REAL NOT NULL DEFAULT 0,
     received_date    TEXT NOT NULL,
     notes            TEXT DEFAULT '',
-    created_at       TEXT DEFAULT NOW()
+    created_at       TEXT DEFAULT CURRENT_TIMESTAMP
   );
 
   CREATE TABLE IF NOT EXISTS goals (
@@ -135,7 +145,7 @@ const SCHEMA2 = `
     current_amount   REAL NOT NULL DEFAULT 0,
     target_date      TEXT NOT NULL,
     notes            TEXT DEFAULT '',
-    created_at       TEXT DEFAULT NOW()
+    created_at       TEXT DEFAULT CURRENT_TIMESTAMP
   );
 `;
 
@@ -148,7 +158,7 @@ const SCHEMA3 = `
     label      TEXT NOT NULL DEFAULT '',
     detail     TEXT NOT NULL DEFAULT '',
     changed_by TEXT NOT NULL DEFAULT 'You',
-    created_at TEXT DEFAULT NOW()
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
   );
 `;
 
@@ -168,10 +178,15 @@ async function initSqlJs() {
     console.log('🆕 Created new database.');
   }
 
-  runSqlJs(SCHEMA);
-  runSqlJs(SCHEMA2);
-  runSqlJs(SCHEMA3);
-  saveSqlJs();
+  try {
+    runSqlJs(SCHEMA);
+    runSqlJs(SCHEMA2);
+    runSqlJs(SCHEMA3);
+    saveSqlJs();
+  } catch (err) {
+    console.error('❌ Failed to initialize database schema:', err.message);
+    throw err;
+  }
 }
 
 function saveSqlJs() {
@@ -193,8 +208,18 @@ function queryOneSqlJs(sql, params = []) {
 }
 
 function runSqlJs(sql, params = []) {
-  db.run(sql, params);
-  saveSqlJs();
+  try {
+    // sql.js db.run() expects individual statements, not multiple statements
+    // Split by semicolon and run each one
+    const statements = sql.split(';').map(s => s.trim()).filter(s => s.length > 0);
+    for (const stmt of statements) {
+      db.run(stmt, params);
+    }
+  } catch (err) {
+    console.error('❌ SQL Error in runSqlJs:', err.message);
+    console.error('SQL:', sql.substring(0, 200));
+    throw err;
+  }
 }
 
 // ── PostgreSQL implementation ───────────────────────────────
@@ -234,6 +259,28 @@ async function initDb() {
     await initPostgres();
   } else {
     await initSqlJs();
+  }
+  
+  // Run startup migration: link existing members to first user if only one user exists
+  await runStartupMigration();
+}
+
+async function runStartupMigration() {
+  try {
+    const userCount = await queryOne('SELECT COUNT(*) as n FROM users', []);
+    const count = userCount?.n || 0;
+    
+    if (count === 1) {
+      // Get the first (and only) user
+      const user = await queryOne('SELECT id FROM users LIMIT 1', []);
+      if (user) {
+        // Link all un-owned members to this user
+        await run('UPDATE members SET user_id=$1 WHERE user_id IS NULL OR user_id=\'\'', [user.id]);
+      }
+    }
+  } catch (err) {
+    // Migration table may not exist yet or other errors - that's ok on first run
+    console.log('ℹ️ Startup migration skipped (expected on first run)');
   }
 }
 

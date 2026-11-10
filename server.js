@@ -4,10 +4,25 @@ require('dotenv').config();
 
 const express  = require('express');
 const path     = require('path');
+const session  = require('express-session');
+const bcrypt   = require('bcryptjs');
 const { uid, initDb, query, queryOne, run } = require('./src/db.js');
 
 const app = express();
 app.use(express.json());
+
+// ── Session Middleware ────────────────────────────────────────
+app.use(session({
+  secret: process.env.SESSION_SECRET || 'fd-portfolio-dev-secret-change-in-prod',
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    maxAge: 1000 * 60 * 60 * 24 * 7  // 7 days
+  }
+}));
+
 app.use(express.static(path.join(__dirname, 'public'), {
   setHeaders: (res, filePath) => {
     if (filePath.endsWith('.js') || filePath.endsWith('.css')) {
@@ -80,23 +95,157 @@ async function logAudit(action, entity, entityId, label, detail = '') {
   );
 }
 
-// ── Members API ───────────────────────────────────────────────
-app.get('/api/members', async (req, res) => {
+// ── Auth Middleware & Helpers ─────────────────────────────────
+function requireAuth(req, res, next) {
+  if (!req.session || !req.session.userId) {
+    return res.status(401).json({ error: 'Not authenticated' });
+  }
+  next();
+}
+
+function isValidEmail(email) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+// ── Auth Routes ───────────────────────────────────────────────
+app.post('/api/auth/signup', async (req, res) => {
   try {
-    const rows = await query('SELECT * FROM members ORDER BY created_at ASC');
+    const { email, password, displayName = '' } = req.body;
+    
+    // Validate input
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Email and password are required' });
+    }
+    if (!isValidEmail(email)) {
+      return res.status(400).json({ error: 'Invalid email format' });
+    }
+    if (password.length < 6) {
+      return res.status(400).json({ error: 'Password must be at least 6 characters' });
+    }
+    
+    // Check if user already exists
+    const existingUser = await queryOne('SELECT id FROM users WHERE email=$1', [email]);
+    if (existingUser) {
+      return res.status(409).json({ error: 'Email already registered' });
+    }
+    
+    // Hash password
+    const passwordHash = await bcrypt.hash(password, 12);
+    
+    // Create user
+    const userId = uid();
+    const userCountResult = await queryOne('SELECT COUNT(*) as n FROM users', []);
+    const userCount = userCountResult?.n || 0;
+    const isFirstUser = userCount === 0;
+    
+    await run(
+      'INSERT INTO users (id, email, password_hash, display_name, is_admin) VALUES ($1,$2,$3,$4,$5)',
+      [userId, email, passwordHash, displayName, isFirstUser ? 1 : 0]
+    );
+    
+    // If first user, link existing members to this user
+    if (isFirstUser) {
+      await run('UPDATE members SET user_id=$1 WHERE user_id IS NULL OR user_id=\'\'', [userId]);
+    }
+    
+    // Set session
+    req.session.userId = userId;
+    
+    res.status(201).json({
+      id: userId,
+      email: email,
+      displayName: displayName
+    });
+  } catch (err) {
+    console.error('Signup error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Email and password are required' });
+    }
+    
+    // Find user by email
+    const user = await queryOne('SELECT id, email, password_hash, display_name FROM users WHERE email=$1', [email]);
+    if (!user) {
+      return res.status(401).json({ error: 'Invalid email or password' });
+    }
+    
+    // Compare password
+    const isMatch = await bcrypt.compare(password, user.password_hash);
+    if (!isMatch) {
+      return res.status(401).json({ error: 'Invalid email or password' });
+    }
+    
+    // Set session
+    req.session.userId = user.id;
+    
+    res.json({
+      id: user.id,
+      email: user.email,
+      displayName: user.display_name
+    });
+  } catch (err) {
+    console.error('Login error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/auth/logout', (req, res) => {
+  req.session.destroy((err) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json({ ok: true });
+  });
+});
+
+app.get('/api/auth/me', async (req, res) => {
+  if (!req.session || !req.session.userId) {
+    return res.status(401).json({ error: 'Not authenticated' });
+  }
+  try {
+    const user = await queryOne('SELECT id, email, display_name FROM users WHERE id=$1', [req.session.userId]);
+    if (!user) {
+      req.session.destroy();
+      return res.status(401).json({ error: 'User not found' });
+    }
+    res.json({
+      id: user.id,
+      email: user.email,
+      displayName: user.display_name
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Ownership check helper ─────────────────────────────────────
+async function checkMemberOwnership(memberId, userId) {
+  const m = await queryOne('SELECT user_id FROM members WHERE id=$1', [memberId]);
+  return m && m.user_id === userId;
+}
+
+// ── Members API ───────────────────────────────────────────────
+app.get('/api/members', requireAuth, async (req, res) => {
+  try {
+    const rows = await query('SELECT * FROM members WHERE user_id=$1 ORDER BY created_at ASC', [req.session.userId]);
     res.json(rows.map(rowToMember));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-app.post('/api/members', async (req, res) => {
+app.post('/api/members', requireAuth, async (req, res) => {
   try {
     const { name, relation, pan='', phone='', email='', notes='' } = req.body;
     if (!name || !relation) return res.status(400).json({ error: 'name and relation are required' });
     const id = uid();
-    await run(`INSERT INTO members (id,name,relation,pan,phone,email,notes) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-        [id, name, relation, pan, phone, email, notes]);
+    await run(`INSERT INTO members (id,name,relation,pan,phone,email,notes,user_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+        [id, name, relation, pan, phone, email, notes, req.session.userId]);
     await logAudit('CREATE', 'Member', id, name, `Relation: ${relation}`);
     const row = await queryOne('SELECT * FROM members WHERE id=$1', [id]);
     res.status(201).json(rowToMember(row));
@@ -105,8 +254,11 @@ app.post('/api/members', async (req, res) => {
   }
 });
 
-app.put('/api/members/:id', async (req, res) => {
+app.put('/api/members/:id', requireAuth, async (req, res) => {
   try {
+    const isOwner = await checkMemberOwnership(req.params.id, req.session.userId);
+    if (!isOwner) return res.status(403).json({ error: 'Access denied' });
+    
     const { name, relation, pan='', phone='', email='', notes='' } = req.body;
     await run(`UPDATE members SET name=$1,relation=$2,pan=$3,phone=$4,email=$5,notes=$6 WHERE id=$7`,
         [name, relation, pan, phone, email, notes, req.params.id]);
@@ -119,8 +271,11 @@ app.put('/api/members/:id', async (req, res) => {
   }
 });
 
-app.delete('/api/members/:id', async (req, res) => {
+app.delete('/api/members/:id', requireAuth, async (req, res) => {
   try {
+    const isOwner = await checkMemberOwnership(req.params.id, req.session.userId);
+    if (!isOwner) return res.status(403).json({ error: 'Access denied' });
+    
     const memberAccts = await query('SELECT id FROM accounts WHERE member_id=$1', [req.params.id]);
     for (const a of memberAccts) {
       await run("UPDATE deposits SET linked_account_id='' WHERE linked_account_id=$1", [a.id]);
@@ -141,21 +296,26 @@ app.delete('/api/members/:id', async (req, res) => {
 });
 
 // ── Accounts API ──────────────────────────────────────────────
-app.get('/api/accounts', async (req, res) => {
+app.get('/api/accounts', requireAuth, async (req, res) => {
   try {
-    const rows = await query('SELECT * FROM accounts ORDER BY is_primary DESC, created_at ASC');
+    const rows = await query('SELECT * FROM accounts WHERE member_id IN (SELECT id FROM members WHERE user_id=$1) ORDER BY is_primary DESC, created_at ASC', [req.session.userId]);
     res.json(rows.map(rowToAccount));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-app.post('/api/accounts', async (req, res) => {
+app.post('/api/accounts', requireAuth, async (req, res) => {
   try {
     const { memberId, bank, acctNumber, acctType, ifsc='', branch='',
             acctHolderName='', openDate='', isPrimary=false, notes='' } = req.body;
     if (!memberId || !bank || !acctNumber || !acctType)
       return res.status(400).json({ error: 'memberId, bank, acctNumber, acctType are required' });
+    
+    // Verify member belongs to user
+    const isOwner = await checkMemberOwnership(memberId, req.session.userId);
+    if (!isOwner) return res.status(403).json({ error: 'Access denied' });
+    
     if (isPrimary) await run('UPDATE accounts SET is_primary=0 WHERE member_id=$1', [memberId]);
     const id = uid();
     await run(`INSERT INTO accounts (id,member_id,bank,acct_number,acct_type,ifsc,branch,acct_holder_name,open_date,is_primary,notes)
@@ -169,8 +329,13 @@ app.post('/api/accounts', async (req, res) => {
   }
 });
 
-app.put('/api/accounts/:id', async (req, res) => {
+app.put('/api/accounts/:id', requireAuth, async (req, res) => {
   try {
+    const acc = await queryOne('SELECT member_id FROM accounts WHERE id=$1', [req.params.id]);
+    if (!acc || !(await checkMemberOwnership(acc.member_id, req.session.userId))) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+    
     const { memberId, bank, acctNumber, acctType, ifsc='', branch='',
             acctHolderName='', openDate='', isPrimary=false, notes='' } = req.body;
     if (isPrimary) await run('UPDATE accounts SET is_primary=0 WHERE member_id=$1 AND id!=$2', [memberId, req.params.id]);
@@ -186,8 +351,13 @@ app.put('/api/accounts/:id', async (req, res) => {
   }
 });
 
-app.delete('/api/accounts/:id', async (req, res) => {
+app.delete('/api/accounts/:id', requireAuth, async (req, res) => {
   try {
+    const acc = await queryOne('SELECT member_id FROM accounts WHERE id=$1', [req.params.id]);
+    if (!acc || !(await checkMemberOwnership(acc.member_id, req.session.userId))) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+    
     await run("UPDATE deposits SET linked_account_id='' WHERE linked_account_id=$1", [req.params.id]);
     await run('DELETE FROM accounts WHERE id=$1', [req.params.id]);
     res.json({ ok: true });
@@ -197,22 +367,27 @@ app.delete('/api/accounts/:id', async (req, res) => {
 });
 
 // ── Deposits API ──────────────────────────────────────────────
-app.get('/api/deposits', async (req, res) => {
+app.get('/api/deposits', requireAuth, async (req, res) => {
   try {
-    const rows = await query('SELECT * FROM deposits ORDER BY start_date ASC');
+    const rows = await query('SELECT * FROM deposits WHERE member_id IN (SELECT id FROM members WHERE user_id=$1) ORDER BY start_date ASC', [req.session.userId]);
     res.json(rows.map(rowToDeposit));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-app.post('/api/deposits', async (req, res) => {
+app.post('/api/deposits', requireAuth, async (req, res) => {
   try {
     const { memberId, linkedAccountId='', bank, accountNo='', principal, rate,
             compounding='quarterly', startDate, tenureYears=0, tenureMonths=0,
             tenureDays=0, maturityDate, payout='cumulative', nomineeId='', notes='' } = req.body;
     if (!memberId || !bank || !principal || !rate || !startDate || !maturityDate)
       return res.status(400).json({ error: 'Required fields missing' });
+    
+    // Verify member belongs to user
+    const isOwner = await checkMemberOwnership(memberId, req.session.userId);
+    if (!isOwner) return res.status(403).json({ error: 'Access denied' });
+    
     const id = uid();
     await run(`INSERT INTO deposits (id,member_id,linked_account_id,bank,account_no,principal,rate,
          compounding,start_date,tenure_years,tenure_months,tenure_days,maturity_date,payout,nominee_id,notes)
@@ -229,8 +404,13 @@ app.post('/api/deposits', async (req, res) => {
   }
 });
 
-app.put('/api/deposits/:id', async (req, res) => {
+app.put('/api/deposits/:id', requireAuth, async (req, res) => {
   try {
+    const dep = await queryOne('SELECT member_id FROM deposits WHERE id=$1', [req.params.id]);
+    if (!dep || !(await checkMemberOwnership(dep.member_id, req.session.userId))) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+    
     const { memberId, linkedAccountId='', bank, accountNo='', principal, rate,
             compounding='quarterly', startDate, tenureYears=0, tenureMonths=0,
             tenureDays=0, maturityDate, payout='cumulative', nomineeId='', notes='' } = req.body;
@@ -249,9 +429,14 @@ app.put('/api/deposits/:id', async (req, res) => {
   }
 });
 
-app.delete('/api/deposits/:id', async (req, res) => {
+app.delete('/api/deposits/:id', requireAuth, async (req, res) => {
   try {
-    const dRow = await queryOne('SELECT bank, principal, maturity_date FROM deposits WHERE id=$1', [req.params.id]);
+    const dep = await queryOne('SELECT member_id, bank, principal, maturity_date FROM deposits WHERE id=$1', [req.params.id]);
+    if (!dep || !(await checkMemberOwnership(dep.member_id, req.session.userId))) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+    
+    const dRow = dep;
     await logAudit('DELETE', 'Deposit', req.params.id, dRow ? `${dRow.bank} – ₹${Number(dRow.principal).toLocaleString('en-IN')}` : req.params.id, dRow ? `Matures: ${dRow.maturity_date}` : '');
     await run('DELETE FROM deposits WHERE id=$1', [req.params.id]);
     res.json({ ok: true });
@@ -261,20 +446,25 @@ app.delete('/api/deposits/:id', async (req, res) => {
 });
 
 // ── PF API ────────────────────────────────────────────────────
-app.get('/api/pf', async (req, res) => {
+app.get('/api/pf', requireAuth, async (req, res) => {
   try {
-    const rows = await query('SELECT * FROM pf_accounts ORDER BY created_at ASC');
+    const rows = await query('SELECT * FROM pf_accounts WHERE member_id IN (SELECT id FROM members WHERE user_id=$1) ORDER BY created_at ASC', [req.session.userId]);
     res.json(rows.map(rowToPF));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-app.post('/api/pf', async (req, res) => {
+app.post('/api/pf', requireAuth, async (req, res) => {
   try {
     const { memberId, uan='', employerName='', empContribution=0, erContribution=0,
             currentBalance=0, interestRate=8.25, joinDate='', notes='' } = req.body;
     if (!memberId) return res.status(400).json({ error: 'memberId required' });
+    
+    // Verify member belongs to user
+    const isOwner = await checkMemberOwnership(memberId, req.session.userId);
+    if (!isOwner) return res.status(403).json({ error: 'Access denied' });
+    
     const id = uid();
     await run(`INSERT INTO pf_accounts (id,member_id,uan,employer_name,emp_contribution,er_contribution,current_balance,interest_rate,join_date,notes)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
@@ -288,8 +478,13 @@ app.post('/api/pf', async (req, res) => {
   }
 });
 
-app.put('/api/pf/:id', async (req, res) => {
+app.put('/api/pf/:id', requireAuth, async (req, res) => {
   try {
+    const pf = await queryOne('SELECT member_id FROM pf_accounts WHERE id=$1', [req.params.id]);
+    if (!pf || !(await checkMemberOwnership(pf.member_id, req.session.userId))) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+    
     const { memberId, uan='', employerName='', empContribution=0, erContribution=0,
             currentBalance=0, interestRate=8.25, joinDate='', notes='' } = req.body;
     await run(`UPDATE pf_accounts SET member_id=$1,uan=$2,employer_name=$3,emp_contribution=$4,er_contribution=$5,
@@ -304,9 +499,14 @@ app.put('/api/pf/:id', async (req, res) => {
   }
 });
 
-app.delete('/api/pf/:id', async (req, res) => {
+app.delete('/api/pf/:id', requireAuth, async (req, res) => {
   try {
-    const pfRow = await queryOne('SELECT employer_name FROM pf_accounts WHERE id=$1', [req.params.id]);
+    const pf = await queryOne('SELECT member_id, employer_name FROM pf_accounts WHERE id=$1', [req.params.id]);
+    if (!pf || !(await checkMemberOwnership(pf.member_id, req.session.userId))) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+    
+    const pfRow = pf;
     await logAudit('DELETE', 'PF', req.params.id, pfRow ? pfRow.employer_name||'PF Account' : req.params.id, 'PF account deleted');
     await run('DELETE FROM pf_accounts WHERE id=$1', [req.params.id]);
     res.json({ ok: true });
@@ -316,20 +516,25 @@ app.delete('/api/pf/:id', async (req, res) => {
 });
 
 // ── NPS API ───────────────────────────────────────────────────
-app.get('/api/nps', async (req, res) => {
+app.get('/api/nps', requireAuth, async (req, res) => {
   try {
-    const rows = await query('SELECT * FROM nps_accounts ORDER BY created_at ASC');
+    const rows = await query('SELECT * FROM nps_accounts WHERE member_id IN (SELECT id FROM members WHERE user_id=$1) ORDER BY created_at ASC', [req.session.userId]);
     res.json(rows.map(rowToNPS));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-app.post('/api/nps', async (req, res) => {
+app.post('/api/nps', requireAuth, async (req, res) => {
   try {
     const { memberId, pran='', tier='Tier I', fundManager='', subCategory='',
             totalInvested=0, currentValue=0, unitsHeld=0, nav=0, startDate='', notes='' } = req.body;
     if (!memberId) return res.status(400).json({ error: 'memberId required' });
+    
+    // Verify member belongs to user
+    const isOwner = await checkMemberOwnership(memberId, req.session.userId);
+    if (!isOwner) return res.status(403).json({ error: 'Access denied' });
+    
     const id = uid();
     await run(`INSERT INTO nps_accounts (id,member_id,pran,tier,fund_manager,sub_category,total_invested,current_value,units_held,nav,start_date,notes)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
@@ -343,8 +548,13 @@ app.post('/api/nps', async (req, res) => {
   }
 });
 
-app.put('/api/nps/:id', async (req, res) => {
+app.put('/api/nps/:id', requireAuth, async (req, res) => {
   try {
+    const nps = await queryOne('SELECT member_id FROM nps_accounts WHERE id=$1', [req.params.id]);
+    if (!nps || !(await checkMemberOwnership(nps.member_id, req.session.userId))) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+    
     const { memberId, pran='', tier='Tier I', fundManager='', subCategory='',
             totalInvested=0, currentValue=0, unitsHeld=0, nav=0, startDate='', notes='' } = req.body;
     await run(`UPDATE nps_accounts SET member_id=$1,pran=$2,tier=$3,fund_manager=$4,sub_category=$5,
@@ -359,9 +569,14 @@ app.put('/api/nps/:id', async (req, res) => {
   }
 });
 
-app.delete('/api/nps/:id', async (req, res) => {
+app.delete('/api/nps/:id', requireAuth, async (req, res) => {
   try {
-    const nRow = await queryOne('SELECT tier, fund_manager FROM nps_accounts WHERE id=$1', [req.params.id]);
+    const nps = await queryOne('SELECT member_id, tier, fund_manager FROM nps_accounts WHERE id=$1', [req.params.id]);
+    if (!nps || !(await checkMemberOwnership(nps.member_id, req.session.userId))) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+    
+    const nRow = nps;
     await logAudit('DELETE', 'NPS', req.params.id, nRow ? `${nRow.tier} – ${nRow.fund_manager}` : req.params.id, 'NPS account deleted');
     await run('DELETE FROM nps_accounts WHERE id=$1', [req.params.id]);
     res.json({ ok: true });
@@ -371,21 +586,26 @@ app.delete('/api/nps/:id', async (req, res) => {
 });
 
 // ── SIP API ───────────────────────────────────────────────────
-app.get('/api/sip', async (req, res) => {
+app.get('/api/sip', requireAuth, async (req, res) => {
   try {
-    const rows = await query('SELECT * FROM sip_investments ORDER BY start_date ASC');
+    const rows = await query('SELECT * FROM sip_investments WHERE member_id IN (SELECT id FROM members WHERE user_id=$1) ORDER BY start_date ASC', [req.session.userId]);
     res.json(rows.map(rowToSIP));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-app.post('/api/sip', async (req, res) => {
+app.post('/api/sip', requireAuth, async (req, res) => {
   try {
     const { memberId, fundName, folioNumber='', fundType='Equity', amcName='',
             monthlyAmount=0, startDate, totalInvested=0, currentValue=0,
             unitsHeld=0, nav=0, isActive=true, notes='' } = req.body;
     if (!memberId || !fundName || !startDate) return res.status(400).json({ error: 'memberId, fundName, startDate required' });
+    
+    // Verify member belongs to user
+    const isOwner = await checkMemberOwnership(memberId, req.session.userId);
+    if (!isOwner) return res.status(403).json({ error: 'Access denied' });
+    
     const id = uid();
     await run(`INSERT INTO sip_investments (id,member_id,fund_name,folio_number,fund_type,amc_name,monthly_amount,start_date,total_invested,current_value,units_held,nav,is_active,notes)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
@@ -400,8 +620,13 @@ app.post('/api/sip', async (req, res) => {
   }
 });
 
-app.put('/api/sip/:id', async (req, res) => {
+app.put('/api/sip/:id', requireAuth, async (req, res) => {
   try {
+    const sip = await queryOne('SELECT member_id FROM sip_investments WHERE id=$1', [req.params.id]);
+    if (!sip || !(await checkMemberOwnership(sip.member_id, req.session.userId))) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+    
     const { memberId, fundName, folioNumber='', fundType='Equity', amcName='',
             monthlyAmount=0, startDate, totalInvested=0, currentValue=0,
             unitsHeld=0, nav=0, isActive=true, notes='' } = req.body;
@@ -418,9 +643,14 @@ app.put('/api/sip/:id', async (req, res) => {
   }
 });
 
-app.delete('/api/sip/:id', async (req, res) => {
+app.delete('/api/sip/:id', requireAuth, async (req, res) => {
   try {
-    const sRow = await queryOne('SELECT fund_name FROM sip_investments WHERE id=$1', [req.params.id]);
+    const sip = await queryOne('SELECT member_id, fund_name FROM sip_investments WHERE id=$1', [req.params.id]);
+    if (!sip || !(await checkMemberOwnership(sip.member_id, req.session.userId))) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+    
+    const sRow = sip;
     await logAudit('DELETE', 'SIP', req.params.id, sRow ? sRow.fund_name : req.params.id, 'SIP fund deleted');
     await run('DELETE FROM sip_investments WHERE id=$1', [req.params.id]);
     res.json({ ok: true });
@@ -430,7 +660,7 @@ app.delete('/api/sip/:id', async (req, res) => {
 });
 
 // ── History / Audit Log API ───────────────────────────────────
-app.get('/api/history', async (req, res) => {
+app.get('/api/history', requireAuth, async (req, res) => {
   try {
     const limit  = parseInt(req.query.limit)  || 200;
     const entity = req.query.entity || '';
@@ -450,7 +680,7 @@ app.get('/api/history', async (req, res) => {
   }
 });
 
-app.delete('/api/history', async (req, res) => {
+app.delete('/api/history', requireAuth, async (req, res) => {
   try {
     await run('DELETE FROM audit_log');
     res.json({ ok: true });
@@ -622,19 +852,24 @@ app.delete('/api/goals/:id', async (req, res) => {
 });
 
 // ── Other Records API ───────────────────────────────────────
-app.get('/api/others', async (req, res) => {
+app.get('/api/others', requireAuth, async (req, res) => {
   try {
-    const rows = await query('SELECT * FROM other_records ORDER BY received_date ASC');
+    const rows = await query('SELECT * FROM other_records WHERE member_id IN (SELECT id FROM members WHERE user_id=$1) ORDER BY received_date ASC', [req.session.userId]);
     res.json(rows.map(rowToOtherRecord));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-app.post('/api/others', async (req, res) => {
+app.post('/api/others', requireAuth, async (req, res) => {
   try {
     const { memberId, category, title, amount=0, receivedDate, notes='' } = req.body;
     if (!memberId || !category || !title || !receivedDate) return res.status(400).json({ error: 'memberId, category, title, and receivedDate are required' });
+    
+    // Verify member belongs to user
+    const isOwner = await checkMemberOwnership(memberId, req.session.userId);
+    if (!isOwner) return res.status(403).json({ error: 'Access denied' });
+    
     const id = uid();
     await run(`INSERT INTO other_records (id,member_id,category,title,amount,received_date,notes)
          VALUES ($1,$2,$3,$4,$5,$6,$7)`, [id, memberId, category, title, amount, receivedDate, notes]);
@@ -645,8 +880,13 @@ app.post('/api/others', async (req, res) => {
   }
 });
 
-app.put('/api/others/:id', async (req, res) => {
+app.put('/api/others/:id', requireAuth, async (req, res) => {
   try {
+    const other = await queryOne('SELECT member_id FROM other_records WHERE id=$1', [req.params.id]);
+    if (!other || !(await checkMemberOwnership(other.member_id, req.session.userId))) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+    
     const { memberId, category, title, amount=0, receivedDate, notes='' } = req.body;
     await run(`UPDATE other_records SET member_id=$1,category=$2,title=$3,amount=$4,received_date=$5,notes=$6 WHERE id=$7`,
         [memberId, category, title, amount, receivedDate, notes, req.params.id]);
@@ -658,8 +898,13 @@ app.put('/api/others/:id', async (req, res) => {
   }
 });
 
-app.delete('/api/others/:id', async (req, res) => {
+app.delete('/api/others/:id', requireAuth, async (req, res) => {
   try {
+    const other = await queryOne('SELECT member_id FROM other_records WHERE id=$1', [req.params.id]);
+    if (!other || !(await checkMemberOwnership(other.member_id, req.session.userId))) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+    
     await run('DELETE FROM other_records WHERE id=$1', [req.params.id]);
     res.json({ ok: true });
   } catch (err) {
@@ -723,7 +968,13 @@ async function seedDemo() {
 async function start() {
   try {
     await initDb();
-    await seedDemo();
+    
+    // Only seed demo data if using SQLite (not PostgreSQL)
+    const isPostgres = !!process.env.DATABASE_URL;
+    if (!isPostgres) {
+      await seedDemo();
+    }
+    
     const PORT = process.env.PORT || 3000;
     app.listen(PORT, () => {
       console.log(`\n🏦 Family Portfolio Manager → http://localhost:${PORT}\n`);

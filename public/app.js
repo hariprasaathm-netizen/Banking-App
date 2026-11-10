@@ -3,6 +3,160 @@
    ============================================================ */
 'use strict';
 
+// ── Auth State & Helpers ──────────────────────────────────────
+let currentUser = null;
+
+async function checkAuth() {
+  try {
+    const res = await fetch('/api/auth/me');
+    if (res.ok) {
+      currentUser = await res.json();
+      showApp();
+      return true;
+    } else {
+      showAuthScreen();
+      return false;
+    }
+  } catch (err) {
+    console.error('Auth check failed:', err);
+    showAuthScreen();
+    return false;
+  }
+}
+
+function showAuthScreen() {
+  document.getElementById('authScreen').classList.remove('hidden');
+  const topbar = document.querySelector('header.topbar');
+  const main = document.querySelector('main.main-content');
+  if (topbar) topbar.classList.add('hidden');
+  if (main) main.classList.add('hidden');
+  document.getElementById('logoutBtn').style.display = 'none';
+}
+
+function showApp() {
+  document.getElementById('authScreen').classList.add('hidden');
+  const topbar = document.querySelector('header.topbar');
+  const main = document.querySelector('main.main-content');
+  if (topbar) topbar.classList.remove('hidden');
+  if (main) main.classList.remove('hidden');
+  document.getElementById('logoutBtn').style.display = 'inline-block';
+  
+  // Update topbar with user info
+  const brandName = document.querySelector('.brand-name');
+  if (brandName && currentUser) {
+    brandName.textContent = currentUser.displayName || currentUser.email;
+  }
+}
+
+async function handleLogin(e) {
+  e.preventDefault();
+  const email = document.getElementById('loginEmail').value;
+  const password = document.getElementById('loginPassword').value;
+  
+  showAuthLoading(true);
+  clearAuthError();
+  
+  try {
+    const res = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password })
+    });
+    
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.error || 'Login failed');
+    }
+    
+    currentUser = await res.json();
+    document.getElementById('loginForm').reset();
+    showApp();
+    await loadAllData();
+  } catch (err) {
+    showAuthError(err.message);
+  } finally {
+    showAuthLoading(false);
+  }
+}
+
+async function handleSignup(e) {
+  e.preventDefault();
+  const email = document.getElementById('signupEmail').value;
+  const password = document.getElementById('signupPassword').value;
+  const displayName = document.getElementById('signupName').value;
+  
+  showAuthLoading(true);
+  clearAuthError();
+  
+  try {
+    const res = await fetch('/api/auth/signup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password, displayName })
+    });
+    
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.error || 'Signup failed');
+    }
+    
+    currentUser = await res.json();
+    document.getElementById('signupForm').reset();
+    switchAuthTab('login');
+    showApp();
+    await loadAllData();
+  } catch (err) {
+    showAuthError(err.message);
+  } finally {
+    showAuthLoading(false);
+  }
+}
+
+function switchAuthTab(tab) {
+  document.querySelectorAll('.auth-tab-btn').forEach(btn => btn.classList.remove('active'));
+  document.querySelectorAll('.auth-tab').forEach(el => el.classList.remove('active'));
+  document.querySelector(`[data-tab="${tab}"]`).classList.add('active');
+  document.getElementById(`${tab}Tab`).classList.add('active');
+}
+
+function showAuthError(msg) {
+  const el = document.getElementById('authError');
+  el.textContent = msg;
+  el.classList.remove('hidden');
+}
+
+function clearAuthError() {
+  document.getElementById('authError').classList.add('hidden');
+}
+
+function showAuthLoading(isLoading) {
+  const el = document.getElementById('authLoading');
+  if (isLoading) {
+    el.classList.remove('hidden');
+  } else {
+    el.classList.add('hidden');
+  }
+}
+
+async function handleLogout() {
+  try {
+    await fetch('/api/auth/logout', { method: 'POST' });
+    currentUser = null;
+    showAuthScreen();
+    // Clear all data
+    members = [];
+    accounts = [];
+    deposits = [];
+    pfAccounts = [];
+    npsAccounts = [];
+    sipFunds = [];
+    otherRecords = [];
+    goals = [];
+  } catch (err) {
+    console.error('Logout failed:', err);
+  }
+}
+
 // ── In-memory state (loaded from server on boot) ─────────────
 let members  = [];
 let accounts = [];
@@ -1374,7 +1528,7 @@ importSubmit.addEventListener('click', async () => {
 });
 
 // ── Bootstrap: load all data then render ──────────────────────
-async function init() {
+async function loadAllData() {
   showLoading('Loading portfolio…');
   try {
     [members, accounts, deposits, pfAccounts, npsAccounts, sipFunds, otherRecords, goals] = await Promise.all([
@@ -1405,7 +1559,28 @@ async function init() {
   try { updateGoalViews(); } catch(e) { console.error('goalViews error:', e); }
 }
 
-init();
+// ── App Initialization ────────────────────────────────────────
+async function initApp() {
+  // Setup auth event listeners
+  document.getElementById('loginForm')?.addEventListener('submit', handleLogin);
+  document.getElementById('signupForm')?.addEventListener('submit', handleSignup);
+  document.querySelectorAll('.auth-tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => switchAuthTab(btn.dataset.tab));
+  });
+  document.getElementById('logoutBtn')?.addEventListener('click', handleLogout);
+  
+  // Check authentication status
+  const isAuthenticated = await checkAuth();
+  if (isAuthenticated) {
+    await loadAllData();
+  }
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initApp);
+} else {
+  initApp();
+}
 
 // ============================================================
 //  PF / NPS / SIP — Shared helpers

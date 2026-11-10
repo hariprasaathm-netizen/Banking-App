@@ -985,12 +985,13 @@ app.delete('/api/others/:id', requireAuth, async (req, res) => {
 async function seedDemo() {
   try {
     const memberRow = await queryOne('SELECT COUNT(*) as n FROM members');
-    const depositRow = await queryOne('SELECT COUNT(*) as n FROM deposits');
+    const userRow = await queryOne('SELECT COUNT(*) as n FROM users');
     const memberCount = memberRow?.n || 0;
-    const depositCount = depositRow?.n || 0;
+    const userCount = userRow?.n || 0;
 
-    if (memberCount > 0 || depositCount > 0) {
-      console.log(`ℹ️  Existing data found (${memberCount} members, ${depositCount} deposits) — skipping seed.`);
+    // Skip seed if there are already users (real data) or members
+    if (memberCount > 0 || userCount > 0) {
+      console.log(`ℹ️  Existing data found (${userCount} users, ${memberCount} members) — skipping seed.`);
       return;
     }
 

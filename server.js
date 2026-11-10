@@ -728,7 +728,7 @@ function parseCSV(csvText) {
   return records;
 }
 
-app.post('/api/import/csv', express.text(), async (req, res) => {
+app.post('/api/import/csv', requireAuth, express.text(), async (req, res) => {
   try {
     const csvText = req.body;
     const records = parseCSV(csvText);
@@ -760,13 +760,13 @@ app.post('/api/import/csv', express.text(), async (req, res) => {
           continue;
         }
 
-        const existingMember = await queryOne('SELECT id FROM members WHERE name=$1 AND relation=$2', [memberName, relation]);
+        const existingMember = await queryOne('SELECT id FROM members WHERE name=$1 AND relation=$2 AND user_id=$3', [memberName, relation, req.session.userId]);
         let memberId;
         if (existingMember) {
           memberId = existingMember.id;
         } else {
           memberId = uid();
-          await run('INSERT INTO members (id,name,relation) VALUES ($1,$2,$3)', [memberId, memberName, relation]);
+          await run('INSERT INTO members (id,name,relation,user_id) VALUES ($1,$2,$3,$4)', [memberId, memberName, relation, req.session.userId]);
         }
 
         const startD = new Date(startDate);
@@ -802,22 +802,22 @@ app.post('/api/import/csv', express.text(), async (req, res) => {
 });
 
 // ── Goals API ────────────────────────────────────────────────
-app.get('/api/goals', async (req, res) => {
+app.get('/api/goals', requireAuth, async (req, res) => {
   try {
-    const rows = await query('SELECT * FROM goals ORDER BY target_date ASC, created_at ASC');
+    const rows = await query('SELECT * FROM goals WHERE user_id=$1 ORDER BY target_date ASC, created_at ASC', [req.session.userId]);
     res.json(rows.map(rowToGoal));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-app.post('/api/goals', async (req, res) => {
+app.post('/api/goals', requireAuth, async (req, res) => {
   try {
     const { title, category='General', targetAmount=0, currentAmount=0, targetDate, notes='' } = req.body;
     if (!title || !targetDate) return res.status(400).json({ error: 'title and targetDate are required' });
     const id = uid();
-    await run(`INSERT INTO goals (id,title,category,target_amount,current_amount,target_date,notes)
-         VALUES ($1,$2,$3,$4,$5,$6,$7)`, [id, title, category, targetAmount, currentAmount, targetDate, notes]);
+    await run(`INSERT INTO goals (id,title,category,target_amount,current_amount,target_date,user_id,notes)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`, [id, title, category, targetAmount, currentAmount, targetDate, req.session.userId, notes]);
     await logAudit('CREATE', 'Goal', id, title, `Target: ₹${targetAmount}`);
     const row = await queryOne('SELECT * FROM goals WHERE id=$1', [id]);
     res.status(201).json(rowToGoal(row));
@@ -826,8 +826,13 @@ app.post('/api/goals', async (req, res) => {
   }
 });
 
-app.put('/api/goals/:id', async (req, res) => {
+app.put('/api/goals/:id', requireAuth, async (req, res) => {
   try {
+    const goal = await queryOne('SELECT user_id FROM goals WHERE id=$1', [req.params.id]);
+    if (!goal || goal.user_id !== req.session.userId) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+    
     const { title, category='General', targetAmount=0, currentAmount=0, targetDate, notes='' } = req.body;
     await run(`UPDATE goals SET title=$1,category=$2,target_amount=$3,current_amount=$4,target_date=$5,notes=$6 WHERE id=$7`,
         [title, category, targetAmount, currentAmount, targetDate, notes, req.params.id]);
@@ -840,11 +845,16 @@ app.put('/api/goals/:id', async (req, res) => {
   }
 });
 
-app.delete('/api/goals/:id', async (req, res) => {
+app.delete('/api/goals/:id', requireAuth, async (req, res) => {
   try {
-    const row = await queryOne('SELECT * FROM goals WHERE id=$1', [req.params.id]);
+    const row = await queryOne('SELECT user_id FROM goals WHERE id=$1', [req.params.id]);
+    if (!row || row.user_id !== req.session.userId) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+    
+    const goalRow = await queryOne('SELECT * FROM goals WHERE id=$1', [req.params.id]);
     await run('DELETE FROM goals WHERE id=$1', [req.params.id]);
-    if (row) await logAudit('DELETE', 'Goal', req.params.id, row.title);
+    if (goalRow) await logAudit('DELETE', 'Goal', req.params.id, goalRow.title);
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });

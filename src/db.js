@@ -144,6 +144,7 @@ const SCHEMA2 = `
     target_amount    REAL NOT NULL DEFAULT 0,
     current_amount   REAL NOT NULL DEFAULT 0,
     target_date      TEXT NOT NULL,
+    user_id          TEXT DEFAULT '',
     notes            TEXT DEFAULT '',
     created_at       TEXT DEFAULT CURRENT_TIMESTAMP
   );
@@ -276,6 +277,8 @@ async function runStartupMigration() {
       if (user) {
         // Link all un-owned members to this user
         await run('UPDATE members SET user_id=$1 WHERE user_id IS NULL OR user_id=\'\'', [user.id]);
+        // Link all un-owned goals to this user
+        await run('UPDATE goals SET user_id=$1 WHERE user_id IS NULL OR user_id=\'\'', [user.id]);
       }
     }
   } catch (err) {

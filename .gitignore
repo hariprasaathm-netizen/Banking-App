@@ -2,3 +2,7 @@ node_modules/
 portfolio.db
 portfolio.db-shm
 portfolio.db-wal
+portfolio_backup_*.db
+migrations/
+.agents/tasks/
+FD_Portfolio_*.csv

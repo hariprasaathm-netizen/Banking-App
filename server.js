@@ -282,6 +282,107 @@ app.get('/api/auth/me', async (req, res) => {
   }
 });
 
+// ── Password Reset Endpoints ─────────────────────────────────
+app.post('/api/auth/forgot-password', async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) {
+      return res.status(400).json({ error: 'Email is required' });
+    }
+
+    // Find user
+    const user = await queryOne('SELECT id, email FROM users WHERE email=$1', [email]);
+    if (!user) {
+      // Don't reveal if email exists (security)
+      return res.json({ 
+        success: true, 
+        message: 'If an account exists with this email, a reset link has been sent' 
+      });
+    }
+
+    // Generate reset token
+    const crypto = require('crypto');
+    const token = crypto.randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + 1 * 60 * 60 * 1000); // 1 hour
+
+    // Store reset token
+    const tokenId = uid();
+    await run(
+      'INSERT INTO password_reset_tokens (id, user_id, token, expires_at) VALUES ($1, $2, $3, $4)',
+      [tokenId, user.id, token, expiresAt.toISOString()]
+    );
+
+    // For local/beta: return reset link in response
+    const resetLink = `http://localhost:3000/reset-password?token=${token}`;
+    
+    console.log(`📧 Password reset requested for ${email}`);
+    console.log(`   Reset link: ${resetLink}`);
+
+    res.json({
+      success: true,
+      message: 'If an account exists with this email, a reset link has been sent',
+      // For beta only - in production, this would be sent via email
+      resetLink: resetLink,
+      token: token
+    });
+  } catch (err) {
+    console.error('Forgot password error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/auth/reset-password', async (req, res) => {
+  try {
+    const { token, newPassword } = req.body;
+    
+    if (!token || !newPassword) {
+      return res.status(400).json({ error: 'Token and new password are required' });
+    }
+
+    if (newPassword.length < 12) {
+      return res.status(400).json({ error: 'Password must be at least 12 characters' });
+    }
+
+    // Find valid token
+    const resetRecord = await queryOne(
+      'SELECT user_id, expires_at FROM password_reset_tokens WHERE token = $1',
+      [token]
+    );
+
+    if (!resetRecord) {
+      return res.status(400).json({ error: 'Invalid or expired token' });
+    }
+
+    // Check expiration
+    if (new Date(resetRecord.expires_at) < new Date()) {
+      await run('DELETE FROM password_reset_tokens WHERE token = $1', [token]);
+      return res.status(400).json({ error: 'Token has expired' });
+    }
+
+    // Hash new password
+    const passwordHash = await bcrypt.hash(newPassword, 12);
+
+    // Update password
+    await run(
+      'UPDATE users SET password_hash = $1 WHERE id = $2',
+      [passwordHash, resetRecord.user_id]
+    );
+
+    // Delete used token
+    await run('DELETE FROM password_reset_tokens WHERE token = $1', [token]);
+
+    console.log('✅ Password reset successful');
+
+    res.json({
+      success: true,
+      message: 'Password has been reset successfully. Please log in with your new password.'
+    });
+  } catch (err) {
+    console.error('Reset password error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── Ownership check helper ─────────────────────────────────────
 async function checkMemberOwnership(memberId, userId) {
   const m = await queryOne('SELECT user_id FROM members WHERE id=$1', [memberId]);

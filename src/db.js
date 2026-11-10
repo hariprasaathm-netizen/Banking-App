@@ -28,7 +28,7 @@ const SCHEMA = `
     phone     TEXT DEFAULT '',
     email     TEXT DEFAULT '',
     notes     TEXT DEFAULT '',
-    created_at TEXT DEFAULT (datetime('now'))
+    created_at TEXT DEFAULT NOW()
   );
 
   CREATE TABLE IF NOT EXISTS accounts (
@@ -43,7 +43,7 @@ const SCHEMA = `
     open_date        TEXT DEFAULT '',
     is_primary       INTEGER DEFAULT 0,
     notes            TEXT DEFAULT '',
-    created_at       TEXT DEFAULT (datetime('now'))
+    created_at       TEXT DEFAULT NOW()
   );
 
   CREATE TABLE IF NOT EXISTS deposits (
@@ -63,7 +63,7 @@ const SCHEMA = `
     payout            TEXT DEFAULT 'cumulative',
     nominee_id        TEXT DEFAULT '',
     notes             TEXT DEFAULT '',
-    created_at        TEXT DEFAULT (datetime('now'))
+    created_at        TEXT DEFAULT NOW()
   );
 `;
 
@@ -79,7 +79,7 @@ const SCHEMA2 = `
     interest_rate    REAL DEFAULT 8.25,
     join_date        TEXT DEFAULT '',
     notes            TEXT DEFAULT '',
-    created_at       TEXT DEFAULT (datetime('now'))
+    created_at       TEXT DEFAULT NOW()
   );
 
   CREATE TABLE IF NOT EXISTS nps_accounts (
@@ -95,7 +95,7 @@ const SCHEMA2 = `
     nav              REAL DEFAULT 0,
     start_date       TEXT DEFAULT '',
     notes            TEXT DEFAULT '',
-    created_at       TEXT DEFAULT (datetime('now'))
+    created_at       TEXT DEFAULT NOW()
   );
 
   CREATE TABLE IF NOT EXISTS sip_investments (
@@ -113,7 +113,7 @@ const SCHEMA2 = `
     nav              REAL DEFAULT 0,
     is_active        INTEGER DEFAULT 1,
     notes            TEXT DEFAULT '',
-    created_at       TEXT DEFAULT (datetime('now'))
+    created_at       TEXT DEFAULT NOW()
   );
 
   CREATE TABLE IF NOT EXISTS other_records (
@@ -124,7 +124,7 @@ const SCHEMA2 = `
     amount           REAL NOT NULL DEFAULT 0,
     received_date    TEXT NOT NULL,
     notes            TEXT DEFAULT '',
-    created_at       TEXT DEFAULT (datetime('now'))
+    created_at       TEXT DEFAULT NOW()
   );
 
   CREATE TABLE IF NOT EXISTS goals (
@@ -135,7 +135,7 @@ const SCHEMA2 = `
     current_amount   REAL NOT NULL DEFAULT 0,
     target_date      TEXT NOT NULL,
     notes            TEXT DEFAULT '',
-    created_at       TEXT DEFAULT (datetime('now'))
+    created_at       TEXT DEFAULT NOW()
   );
 `;
 
@@ -148,7 +148,7 @@ const SCHEMA3 = `
     label      TEXT NOT NULL DEFAULT '',
     detail     TEXT NOT NULL DEFAULT '',
     changed_by TEXT NOT NULL DEFAULT 'You',
-    created_at TEXT DEFAULT (datetime('now'))
+    created_at TEXT DEFAULT NOW()
   );
 `;
 

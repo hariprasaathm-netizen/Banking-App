@@ -198,7 +198,7 @@ app.post('/api/auth/login', async (req, res) => {
     }
     
     // Find user by email
-    const user = await queryOne('SELECT id, email, password_hash, display_name FROM users WHERE email=$1', [email]);
+    const user = await queryOne('SELECT id, email, password_hash, display_name, mfa_enabled FROM users WHERE email=$1', [email]);
     if (!user) {
       return res.status(401).json({ error: 'Invalid email or password' });
     }
@@ -209,10 +209,37 @@ app.post('/api/auth/login', async (req, res) => {
       return res.status(401).json({ error: 'Invalid email or password' });
     }
     
-    // Set session
+    // If 2FA is enabled, create MFA session instead of regular session
+    if (user.mfa_enabled) {
+      const crypto = require('crypto');
+      const mfaToken = crypto.randomBytes(32).toString('hex');
+      const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+      
+      const sessionId = uid();
+      await run(
+        'INSERT INTO mfa_sessions (id, user_id, token, verified, expires_at) VALUES ($1, $2, $3, $4, $5)',
+        [sessionId, user.id, mfaToken, false, expiresAt.toISOString()]
+      );
+      
+      return res.json({
+        success: true,
+        requiresMFA: true,
+        mfaSessionToken: mfaToken,
+        message: 'Please enter your 2FA code to continue',
+        user: {
+          id: user.id,
+          email: user.email,
+          displayName: user.display_name
+        }
+      });
+    }
+    
+    // Set regular session for users without 2FA
     req.session.userId = user.id;
     
     res.json({
+      success: true,
+      requiresMFA: false,
       id: user.id,
       email: user.email,
       displayName: user.display_name
@@ -382,6 +409,208 @@ app.post('/api/auth/reset-password', async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+// ── MFA/2FA Endpoints (TOTP-based) ──────────────────────────
+const speakeasy = require('speakeasy');
+const QRCode = require('qrcode');
+
+// Enable 2FA for logged-in user
+app.post('/api/auth/mfa/setup', requireAuth, async (req, res) => {
+  try {
+    const user = await queryOne('SELECT id, email FROM users WHERE id = $1', [req.session.userId]);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    // Generate secret
+    const secret = speakeasy.generateSecret({
+      name: `Family Portfolio (${user.email})`,
+      issuer: 'Family Portfolio Manager',
+      length: 32
+    });
+
+    // Generate QR code
+    const qrCode = await QRCode.toDataURL(secret.otpauth_url);
+
+    res.json({
+      success: true,
+      secret: secret.base32,
+      qrCode: qrCode,
+      backupCodes: generateBackupCodes(10),
+      message: 'Scan this QR code with Google Authenticator, Authy, or Microsoft Authenticator'
+    });
+  } catch (err) {
+    console.error('MFA setup error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Confirm 2FA setup with verification code
+app.post('/api/auth/mfa/confirm', requireAuth, async (req, res) => {
+  try {
+    const { secret, verificationCode } = req.body;
+    
+    if (!secret || !verificationCode) {
+      return res.status(400).json({ error: 'Secret and verification code required' });
+    }
+
+    // Verify the code
+    const verified = speakeasy.totp.verify({
+      secret: secret,
+      encoding: 'base32',
+      token: verificationCode,
+      window: 2
+    });
+
+    if (!verified) {
+      return res.status(400).json({ error: 'Invalid verification code' });
+    }
+
+    // Generate backup codes
+    const backupCodes = generateBackupCodes(10);
+
+    // Store secret and backup codes in database
+    await run(
+      'UPDATE users SET mfa_enabled = TRUE, mfa_secret = $1, mfa_backup_codes = $2 WHERE id = $3',
+      [secret, JSON.stringify(backupCodes), req.session.userId]
+    );
+
+    console.log(`✅ 2FA enabled for user ${req.session.userId}`);
+
+    res.json({
+      success: true,
+      message: '2FA has been enabled successfully',
+      backupCodes: backupCodes,
+      warning: 'Save these backup codes in a safe place. You can use them if you lose access to your authenticator app.'
+    });
+  } catch (err) {
+    console.error('MFA confirm error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Verify MFA code during login (step 2 after password verification)
+app.post('/api/auth/mfa/verify', async (req, res) => {
+  try {
+    const { mfaSessionToken, verificationCode } = req.body;
+    
+    if (!mfaSessionToken || !verificationCode) {
+      return res.status(400).json({ error: 'MFA session token and verification code required' });
+    }
+
+    // Find the MFA session
+    const session = await queryOne(
+      'SELECT user_id, expires_at FROM mfa_sessions WHERE token = $1 AND verified = FALSE',
+      [mfaSessionToken]
+    );
+
+    if (!session) {
+      return res.status(400).json({ error: 'Invalid or expired MFA session' });
+    }
+
+    // Check expiration
+    if (new Date(session.expires_at) < new Date()) {
+      await run('DELETE FROM mfa_sessions WHERE token = $1', [mfaSessionToken]);
+      return res.status(400).json({ error: 'MFA session expired' });
+    }
+
+    // Get user's MFA secret
+    const user = await queryOne('SELECT mfa_secret, mfa_backup_codes FROM users WHERE id = $1', [session.user_id]);
+
+    // Try with TOTP code first
+    let verified = speakeasy.totp.verify({
+      secret: user.mfa_secret,
+      encoding: 'base32',
+      token: verificationCode,
+      window: 2
+    });
+
+    // If not verified, try backup codes
+    if (!verified && user.mfa_backup_codes) {
+      const backupCodes = JSON.parse(user.mfa_backup_codes);
+      if (backupCodes.includes(verificationCode)) {
+        // Remove used backup code
+        const updatedCodes = backupCodes.filter(code => code !== verificationCode);
+        await run('UPDATE users SET mfa_backup_codes = $1 WHERE id = $2', [
+          JSON.stringify(updatedCodes),
+          session.user_id
+        ]);
+        verified = true;
+      }
+    }
+
+    if (!verified) {
+      return res.status(401).json({ error: 'Invalid verification code or backup code' });
+    }
+
+    // Mark MFA session as verified
+    await run('UPDATE mfa_sessions SET verified = TRUE WHERE token = $1', [mfaSessionToken]);
+
+    // Create actual login session
+    req.session.userId = session.user_id;
+
+    const loggedInUser = await queryOne('SELECT id, email, display_name FROM users WHERE id = $1', [session.user_id]);
+
+    console.log(`✅ User logged in with 2FA: ${loggedInUser.email}`);
+
+    res.json({
+      success: true,
+      message: '2FA verification successful',
+      user: {
+        id: loggedInUser.id,
+        email: loggedInUser.email,
+        displayName: loggedInUser.display_name
+      }
+    });
+  } catch (err) {
+    console.error('MFA verify error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Disable 2FA
+app.post('/api/auth/mfa/disable', requireAuth, async (req, res) => {
+  try {
+    const { password } = req.body;
+    if (!password) {
+      return res.status(400).json({ error: 'Password required to disable 2FA' });
+    }
+
+    // Verify password
+    const user = await queryOne('SELECT password_hash FROM users WHERE id = $1', [req.session.userId]);
+    const isMatch = await bcrypt.compare(password, user.password_hash);
+
+    if (!isMatch) {
+      return res.status(401).json({ error: 'Invalid password' });
+    }
+
+    // Disable 2FA
+    await run(
+      'UPDATE users SET mfa_enabled = FALSE, mfa_secret = \'\', mfa_backup_codes = \'\' WHERE id = $1',
+      [req.session.userId]
+    );
+
+    console.log(`✅ 2FA disabled for user ${req.session.userId}`);
+
+    res.json({
+      success: true,
+      message: '2FA has been disabled'
+    });
+  } catch (err) {
+    console.error('MFA disable error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Helper: Generate backup codes
+function generateBackupCodes(count = 10) {
+  const codes = [];
+  for (let i = 0; i < count; i++) {
+    const code = Math.random().toString(36).substring(2, 10).toUpperCase();
+    codes.push(code);
+  }
+  return codes;
+}
 
 // ── Ownership check helper ─────────────────────────────────────
 async function checkMemberOwnership(memberId, userId) {

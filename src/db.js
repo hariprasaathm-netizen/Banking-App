@@ -1,18 +1,24 @@
 'use strict';
 
-const path = require('path');
 const fs = require('fs');
-const initSqlJs = require('sql.js');
+const path = require('path');
+const crypto = require('crypto');
 
-// ── Environment detection ──────────────────────────────────────
+// Determine environment: PostgreSQL if DATABASE_URL set, otherwise use sql.js (local)
 const DATABASE_URL = process.env.DATABASE_URL;
-const isPostgreSQL = !!(DATABASE_URL && DATABASE_URL.includes('postgresql'));
+const DB_PATH = path.join(__dirname, '..', 'portfolio.db');
 
-let db;           // sql.js Database instance
-let pgPool;       // PostgreSQL connection pool
-let SQL;          // sql.js library instance
+let db = null;  // Will hold either sql.js Database or pg connection
+let SQL = null; // sql.js module (only loaded if not using PostgreSQL)
+let isPostgres = !!DATABASE_URL;
+let pgClient = null; // Pool or client for PostgreSQL
 
-// ── Schemas ────────────────────────────────────────────────────
+// ── Helper: Generate unique ID ───────────────────────────────
+function uid() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+}
+
+// ── Schema definitions ──────────────────────────────────────
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS members (
     id        TEXT PRIMARY KEY,
@@ -146,159 +152,131 @@ const SCHEMA3 = `
   );
 `;
 
-// ── Unique ID generator ────────────────────────────────────────
-function uid() {
-  return Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-}
+// ── SQL.js implementation ───────────────────────────────────
+async function initSqlJs() {
+  const initSqlJs = require('sql.js');
+  SQL = await initSqlJs();
 
-// ── DB file persistence (sql.js only) ──────────────────────────
-const DB_PATH = path.join(__dirname, '..', 'portfolio.db');
-
-function saveDb() {
-  if (!isPostgreSQL && db) {
-    const data = db.export();
-    fs.writeFileSync(DB_PATH, Buffer.from(data));
-  }
-  // PostgreSQL: no-op (auto-commits via connection pool)
-}
-
-// ── Initialize database ────────────────────────────────────────
-async function initDb() {
-  try {
-    if (isPostgreSQL) {
-      // Initialize PostgreSQL schema
-      const { Pool } = require('pg');
-      pgPool = new Pool({ connectionString: DATABASE_URL });
-
-      // Create all tables using IF NOT EXISTS
-      await pgPool.query(SCHEMA);
-      await pgPool.query(SCHEMA2);
-      await pgPool.query(SCHEMA3);
-
-      console.log('✅ PostgreSQL database initialized.');
-    } else {
-      // Initialize sql.js
-      if (!SQL) {
-        SQL = await initSqlJs();
-      }
-
-      const dbPath = DB_PATH;
-      if (fs.existsSync(dbPath)) {
-        const fileBuffer = fs.readFileSync(dbPath);
-        db = new SQL.Database(fileBuffer);
-        const backupPath = dbPath.replace('.db', '_backup_' + Date.now() + '.db');
-        fs.writeFileSync(backupPath, fileBuffer);
-        console.log(`📂 Loaded existing database. Backup saved to ${path.basename(backupPath)}`);
-      } else {
-        db = new SQL.Database();
-        console.log('🆕 Created new database.');
-      }
-
-      // Run schema initialization
-      db.run(SCHEMA);
-      db.run(SCHEMA2);
-      db.run(SCHEMA3);
-      saveDb();
-
-      console.log('✅ sql.js database initialized.');
-    }
-  } catch (err) {
-    console.error('❌ Database initialization failed:', err.message);
-    process.exit(1);
-  }
-}
-
-// ── Get current database instance ──────────────────────────────
-function getDb() {
-  if (isPostgreSQL) {
-    return pgPool;
-  }
-  return db;
-}
-
-// ── Query interface (both drivers) ─────────────────────────────
-
-/**
- * Execute SELECT and return all rows as objects
- * @param {string} sql - SQL query
- * @param {array} params - Query parameters
- * @returns {Promise<array>} Array of row objects
- */
-async function query(sql, params = []) {
-  if (isPostgreSQL) {
-    try {
-      const result = await pgPool.query(sql, params);
-      return result.rows;
-    } catch (err) {
-      console.error('Query error:', err.message, { sql, params });
-      throw err;
-    }
+  if (fs.existsSync(DB_PATH)) {
+    const fileBuffer = fs.readFileSync(DB_PATH);
+    db = new SQL.Database(fileBuffer);
+    const backupPath = DB_PATH.replace('.db', '_backup_' + Date.now() + '.db');
+    fs.writeFileSync(backupPath, fileBuffer);
+    console.log(`📂 Loaded existing database. Backup saved to ${path.basename(backupPath)}`);
   } else {
-    // sql.js
-    try {
-      const stmt = db.prepare(sql);
-      stmt.bind(params);
-      const rows = [];
-      while (stmt.step()) {
-        rows.push(stmt.getAsObject());
-      }
-      stmt.free();
-      return rows;
-    } catch (err) {
-      console.error('Query error:', err.message, { sql, params });
-      throw err;
-    }
+    db = new SQL.Database();
+    console.log('🆕 Created new database.');
   }
+
+  runSqlJs(SCHEMA);
+  runSqlJs(SCHEMA2);
+  runSqlJs(SCHEMA3);
+  saveSqlJs();
 }
 
-/**
- * Execute SELECT and return first row or null
- * @param {string} sql - SQL query
- * @param {array} params - Query parameters
- * @returns {Promise<object|null>} First row or null
- */
-async function queryOne(sql, params = []) {
-  const rows = await query(sql, params);
+function saveSqlJs() {
+  const data = db.export();
+  fs.writeFileSync(DB_PATH, Buffer.from(data));
+}
+
+function querySqlJs(sql, params = []) {
+  const stmt = db.prepare(sql);
+  stmt.bind(params);
+  const rows = [];
+  while (stmt.step()) rows.push(stmt.getAsObject());
+  stmt.free();
+  return rows;
+}
+
+function queryOneSqlJs(sql, params = []) {
+  return querySqlJs(sql, params)[0] || null;
+}
+
+function runSqlJs(sql, params = []) {
+  db.run(sql, params);
+  saveSqlJs();
+}
+
+// ── PostgreSQL implementation ───────────────────────────────
+async function initPostgres() {
+  const { Pool } = require('pg');
+  pgClient = new Pool({ connectionString: DATABASE_URL });
+
+  // Test connection
+  const testClient = await pgClient.connect();
+  await testClient.query('SELECT 1');
+  testClient.release();
+  console.log('✅ Connected to PostgreSQL');
+
+  // Create tables
+  await pgClient.query(SCHEMA);
+  await pgClient.query(SCHEMA2);
+  await pgClient.query(SCHEMA3);
+}
+
+async function queryPostgres(sql, params = []) {
+  const result = await pgClient.query(sql, params);
+  return result.rows;
+}
+
+async function queryOnePostgres(sql, params = []) {
+  const rows = await queryPostgres(sql, params);
   return rows[0] || null;
 }
 
-/**
- * Execute INSERT, UPDATE, or DELETE
- * @param {string} sql - SQL statement
- * @param {array} params - Query parameters
- */
-async function run(sql, params = []) {
-  if (isPostgreSQL) {
-    try {
-      await pgPool.query(sql, params);
-    } catch (err) {
-      console.error('Run error:', err.message, { sql, params });
-      // Log but do not crash (matching sql.js behavior)
-    }
+async function runPostgres(sql, params = []) {
+  await pgClient.query(sql, params);
+}
+
+// ── Unified public API ──────────────────────────────────────
+async function initDb() {
+  if (isPostgres) {
+    await initPostgres();
   } else {
-    // sql.js
-    try {
-      db.run(sql, params);
-      saveDb();
-    } catch (err) {
-      console.error('Run error:', err.message, { sql, params });
-      // Log but do not crash
-    }
+    await initSqlJs();
   }
 }
 
-// ── Exports ────────────────────────────────────────────────────
+function getDb() {
+  return isPostgres ? pgClient : db;
+}
+
+// query(): returns array of rows
+async function query(sql, params = []) {
+  if (isPostgres) {
+    return await queryPostgres(sql, params);
+  } else {
+    return querySqlJs(sql, params);
+  }
+}
+
+// queryOne(): returns single row or null
+async function queryOne(sql, params = []) {
+  if (isPostgres) {
+    return await queryOnePostgres(sql, params);
+  } else {
+    return queryOneSqlJs(sql, params);
+  }
+}
+
+// run(): execute INSERT/UPDATE/DELETE
+async function run(sql, params = []) {
+  if (isPostgres) {
+    await runPostgres(sql, params);
+  } else {
+    runSqlJs(sql, params);
+  }
+}
+
+// ── Exports ─────────────────────────────────────────────────
 module.exports = {
+  uid,
+  SCHEMA,
+  SCHEMA2,
+  SCHEMA3,
   initDb,
   getDb,
   query,
   queryOne,
   run,
-  uid,
-  saveDb,
-  SCHEMA,
-  SCHEMA2,
-  SCHEMA3,
-  DATABASE_URL,
-  isPostgreSQL,
 };

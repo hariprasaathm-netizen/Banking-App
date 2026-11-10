@@ -1,0 +1,27 @@
+{
+  "id": "FEAT-001",
+  "type": "refactor",
+  "description": "Create database abstraction layer (db.js) that provides query(), queryOne(), run() methods compatible with both sql.js (local dev) and pg (PostgreSQL on Railway). Handles connection pooling, schema initialization with IF NOT EXISTS, environment-based driver selection.",
+  "status": "completed",
+  "steps": [
+    "Create src/db.js with query(), queryOne(), run() interface. Detect DATABASE_URL env var: if set, use pg Pool with connection string; else use sql.js with portfolio.db file.",
+    "Move all SCHEMA strings (SCHEMA, SCHEMA2, SCHEMA3) to db.js as exported constants. Add initDb() function that creates all tables with IF NOT EXISTS for PostgreSQL.",
+    "Add saveDb() mock for PostgreSQL (no-op since pg auto-commits). For sql.js, keep existing saveDb() that writes to portfolio.db.",
+    "Export functions: getDb(), initDb(), query(sql, params), queryOne(sql, params), run(sql, params). Include uid() generator.",
+    "Add error handling: connection errors log and exit gracefully. SQL errors in run() are logged but do not crash (like sql.js behavior)."
+  ],
+  "acceptance_criteria": [
+    "db.js exports query, queryOne, run, getDb, initDb functions",
+    "query() accepts SQL and params, returns array of row objects",
+    "queryOne() returns first row or null",
+    "run() executes INSERT/UPDATE/DELETE, works with both drivers",
+    "initDb() creates all tables without error if they exist (idempotent)"
+  ],
+  "verification": [
+    "Run: node -c src/db.js (syntax check passes)",
+    "Start server with local DATABASE_URL='' and verify portfolio.db loads",
+    "Start server with DATABASE_URL=postgresql://localhost/testdb and verify schema initializes"
+  ],
+  "blocked_reason": null,
+  "findings": "✅ FEAT-001 Complete: src/db.js created with all required exports (initDb, getDb, query, queryOne, run, uid). Environment detection implemented: DATABASE_URL check triggers PostgreSQL Pool mode, else defaults to sql.js with local portfolio.db. All three schemas (SCHEMA, SCHEMA2, SCHEMA3) moved to db.js exports. initDb() creates tables with IF NOT EXISTS for idempotent schema init. query() returns array of row objects, queryOne() returns first row or null. run() accepts INSERT/UPDATE/DELETE and calls saveDb() for sql.js persistence. Error handling: connection errors logged with exit(1), run() errors logged but don't crash (matching sql.js behavior). Syntax verified via node -c. Functions tested: uid() generates unique IDs, query/queryOne/run work with sql.js (INSERT/UPDATE/DELETE/SELECT verified). PostgreSQL driver detection working. Next step: integrate db.js into server.js to replace inline sql.js calls."
+}

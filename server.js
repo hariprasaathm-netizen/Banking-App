@@ -309,6 +309,164 @@ app.get('/api/auth/me', async (req, res) => {
   }
 });
 
+// ── Account Settings Endpoints ──────────────────────────────
+app.get('/api/settings/account', requireAuth, async (req, res) => {
+  try {
+    const user = await queryOne(
+      'SELECT id, email, display_name, mfa_enabled, created_at FROM users WHERE id=$1',
+      [req.session.userId]
+    );
+
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    res.json({
+      success: true,
+      account: {
+        id: user.id,
+        email: user.email,
+        displayName: user.display_name,
+        mfaEnabled: user.mfa_enabled,
+        createdAt: user.created_at,
+        lastLogin: new Date().toISOString() // In production, track this
+      }
+    });
+  } catch (err) {
+    console.error('Get settings error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Update display name
+app.put('/api/settings/display-name', requireAuth, async (req, res) => {
+  try {
+    const { displayName } = req.body;
+    
+    if (!displayName || displayName.trim().length === 0) {
+      return res.status(400).json({ error: 'Display name cannot be empty' });
+    }
+
+    await run(
+      'UPDATE users SET display_name = $1 WHERE id = $2',
+      [displayName.trim(), req.session.userId]
+    );
+
+    console.log(`✅ Updated display name for user ${req.session.userId}`);
+
+    res.json({
+      success: true,
+      message: 'Display name updated successfully',
+      displayName: displayName.trim()
+    });
+  } catch (err) {
+    console.error('Update display name error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Change password
+app.post('/api/settings/change-password', requireAuth, async (req, res) => {
+  try {
+    const { currentPassword, newPassword, confirmPassword } = req.body;
+
+    if (!currentPassword || !newPassword || !confirmPassword) {
+      return res.status(400).json({ error: 'All fields are required' });
+    }
+
+    if (newPassword !== confirmPassword) {
+      return res.status(400).json({ error: 'New passwords do not match' });
+    }
+
+    if (newPassword.length < 12) {
+      return res.status(400).json({ error: 'New password must be at least 12 characters' });
+    }
+
+    // Verify current password
+    const user = await queryOne('SELECT password_hash FROM users WHERE id = $1', [req.session.userId]);
+    const isMatch = await bcrypt.compare(currentPassword, user.password_hash);
+
+    if (!isMatch) {
+      return res.status(401).json({ error: 'Current password is incorrect' });
+    }
+
+    // Check if new password is same as current
+    const isSamePassword = await bcrypt.compare(newPassword, user.password_hash);
+    if (isSamePassword) {
+      return res.status(400).json({ error: 'New password must be different from current password' });
+    }
+
+    // Hash and update new password
+    const passwordHash = await bcrypt.hash(newPassword, 12);
+    await run(
+      'UPDATE users SET password_hash = $1 WHERE id = $2',
+      [passwordHash, req.session.userId]
+    );
+
+    console.log(`✅ Password changed for user ${req.session.userId}`);
+
+    res.json({
+      success: true,
+      message: 'Password changed successfully'
+    });
+  } catch (err) {
+    console.error('Change password error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Get 2FA status
+app.get('/api/settings/mfa-status', requireAuth, async (req, res) => {
+  try {
+    const user = await queryOne(
+      'SELECT mfa_enabled FROM users WHERE id = $1',
+      [req.session.userId]
+    );
+
+    res.json({
+      success: true,
+      mfa: {
+        enabled: user.mfa_enabled,
+        status: user.mfa_enabled ? 'Enabled' : 'Disabled',
+        description: user.mfa_enabled 
+          ? '2FA is protecting your account. You will be asked for a code when logging in.'
+          : '2FA is not enabled. Enable it to add an extra layer of security.'
+      }
+    });
+  } catch (err) {
+    console.error('Get MFA status error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Get backup codes status (count remaining)
+app.get('/api/settings/backup-codes-status', requireAuth, async (req, res) => {
+  try {
+    const user = await queryOne(
+      'SELECT mfa_backup_codes FROM users WHERE id = $1',
+      [req.session.userId]
+    );
+
+    let codesCount = 0;
+    if (user.mfa_backup_codes) {
+      const codes = JSON.parse(user.mfa_backup_codes || '[]');
+      codesCount = codes.length;
+    }
+
+    res.json({
+      success: true,
+      backupCodes: {
+        remaining: codesCount,
+        total: 10,
+        warning: codesCount < 3 ? 'Low on backup codes. Consider disabling and re-enabling 2FA to generate new codes.' : ''
+      }
+    });
+  } catch (err) {
+    console.error('Get backup codes status error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── Password Reset Endpoints ─────────────────────────────────
 app.post('/api/auth/forgot-password', async (req, res) => {
   try {

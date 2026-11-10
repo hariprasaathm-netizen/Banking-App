@@ -91,6 +91,7 @@
       <button class="nav-btn" data-page="goals">🎯 Goals</button>
       <button class="nav-btn" data-page="alerts">🔔 Alerts</button>
       <button class="nav-btn" data-page="history">🕓 History</button>
+      <button class="nav-btn" data-page="settings">⚙️ Settings</button>
     </nav>
     <div style="display:flex;gap:.5rem">
       <button class="btn-export" id="exportBtn">⬇ Export CSV</button>
@@ -905,6 +906,117 @@
         <div id="historyTimeline" class="history-timeline"></div>
         <p style="text-align:center;color:var(--gray-400);font-size:.85rem;margin-top:1rem">Total: <span id="historyCount">0</span> records</p>
       </div>
+    </section>
+
+    <!-- SETTINGS PAGE -->
+    <section id="page-settings" class="page">
+      <div class="page-header">
+        <h1>Account Settings</h1>
+        <p class="subtitle">Manage your account security and preferences</p>
+      </div>
+
+      <!-- Account Information -->
+      <div class="section-card">
+        <h2>Account Information</h2>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:1.5rem">
+          <div>
+            <label>Email Address</label>
+            <input type="email" id="settingsEmail" readonly style="background:#f0f0f0">
+            <p style="font-size:.85rem;color:var(--gray-500);margin-top:.5rem">Your email cannot be changed</p>
+          </div>
+          <div>
+            <label>Display Name</label>
+            <input type="text" id="settingsDisplayName" placeholder="Your name">
+            <button class="btn-primary" id="updateDisplayNameBtn" style="margin-top:.5rem;width:100%">Save Name</button>
+          </div>
+          <div>
+            <label>Account Created</label>
+            <input type="text" id="settingsCreatedAt" readonly style="background:#f0f0f0">
+          </div>
+          <div>
+            <label>2FA Status</label>
+            <div style="padding:.75rem;background:#f9f9f9;border-radius:.5rem;color:var(--gray-700)">
+              <span id="mfaStatus">Loading...</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Password Management -->
+      <div class="section-card">
+        <h2>🔐 Password Management</h2>
+        <div style="max-width:500px">
+          <div class="form-group">
+            <label for="currentPassword">Current Password</label>
+            <input type="password" id="currentPassword" placeholder="Enter current password">
+          </div>
+          <div class="form-group">
+            <label for="newPassword">New Password</label>
+            <input type="password" id="newPassword" placeholder="At least 12 characters">
+            <small style="color:var(--gray-500)">Password must be at least 12 characters</small>
+          </div>
+          <div class="form-group">
+            <label for="confirmPassword">Confirm New Password</label>
+            <input type="password" id="confirmPassword" placeholder="Re-enter new password">
+          </div>
+          <button class="btn-primary" id="changePasswordBtn" style="width:100%">Change Password</button>
+          <div id="passwordMsg" style="margin-top:.5rem;padding:.5rem;border-radius:.3rem;display:none"></div>
+        </div>
+      </div>
+
+      <!-- 2FA Management -->
+      <div class="section-card">
+        <h2>🔑 Two-Factor Authentication (2FA)</h2>
+        <div id="mfaContainer">
+          <p id="mfaDescription" style="margin-bottom:1rem"></p>
+          <div style="display:flex;gap:1rem;flex-wrap:wrap">
+            <button class="btn-primary" id="setupMfaBtn">Setup 2FA</button>
+            <button class="btn-secondary" id="disableMfaBtn" style="display:none">Disable 2FA</button>
+          </div>
+          <div id="backupCodesStatus" style="margin-top:1rem;padding:1rem;background:#fffbf0;border-left:4px solid #ff9800;border-radius:.3rem;display:none">
+            <p><strong>Backup Codes:</strong> <span id="backupCodesCount">-</span> remaining</p>
+            <small style="color:var(--gray-600)">Save these codes in a secure location. Use them if you lose access to your authenticator app.</small>
+          </div>
+        </div>
+
+        <!-- 2FA Setup Modal Content -->
+        <div id="mfaSetupModal" style="display:none;margin-top:1.5rem;padding:1rem;background:#f0f7ff;border-radius:.5rem">
+          <h3>Setup 2FA</h3>
+          <input type="hidden" id="mfaSecret">
+          <ol style="margin:1rem 0">
+            <li><strong>Download an authenticator app:</strong> Google Authenticator, Authy, or Microsoft Authenticator</li>
+            <li><strong>Scan this QR code:</strong>
+              <div id="mfaQrCode" style="margin:1rem 0;text-align:center">
+                <img id="qrImage" src="" style="max-width:300px;border:1px solid #ddd;padding:.5rem">
+              </div>
+            </li>
+            <li><strong>Enter the 6-digit code:</strong>
+              <input type="text" id="mfaVerificationCode" placeholder="000000" maxlength="6" style="width:150px;padding:.5rem;margin:.5rem 0">
+              <button class="btn-primary" id="confirmMfaBtn">Confirm 2FA</button>
+            </li>
+          </ol>
+          <div id="mfaBackupCodes" style="margin-top:1rem;padding:1rem;background:#fff;border:1px solid #ddd;border-radius:.3rem;display:none">
+            <h4>📋 Backup Codes (Save These!)</h4>
+            <p style="font-size:.9rem;color:var(--gray-600);margin-bottom:.5rem">Keep these codes safe. Use them to access your account if you lose your authenticator app.</p>
+            <div id="backupCodesList" style="display:grid;grid-template-columns:repeat(2, 1fr);gap:.5rem;font-family:monospace;font-size:.85rem"></div>
+            <button class="btn-secondary" id="copyBackupCodesBtn" style="margin-top:.5rem">📋 Copy Codes</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Security Summary -->
+      <div class="section-card" style="background:#f0fff4;border-left:4px solid #4caf50">
+        <h2>🛡️ Security Summary</h2>
+        <ul style="list-style:none;padding:0;margin:0">
+          <li style="padding:.5rem 0">✅ <strong>Password:</strong> Hashed with bcryptjs (12 rounds)</li>
+          <li style="padding:.5rem 0">✅ <strong>Sessions:</strong> Secure httpOnly cookies (7-day expiry)</li>
+          <li style="padding:.5rem 0" id="mfaSummaryItem">⭕ <strong>2FA:</strong> Not enabled</li>
+          <li style="padding:.5rem 0">✅ <strong>Encryption:</strong> HTTPS ready for production</li>
+        </ul>
+      </div>
+
+      <!-- Messages -->
+      <div id="settingsMsg" style="margin-top:1rem;padding:.75rem;border-radius:.3rem;display:none"></div>
     </section>
 
   </main>

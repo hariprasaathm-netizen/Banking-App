@@ -203,6 +203,189 @@ async function handleLogout() {
   }
 }
 
+// ── Settings Functions ────────────────────────────────────────
+async function loadSettings() {
+  try {
+    showLoading('Loading settings...');
+    const accountRes = await API.get('/api/settings/account');
+    const account = accountRes.account;
+    const mfaStatusRes = await API.get('/api/settings/mfa-status');
+    const mfaStatus = mfaStatusRes.mfa;
+    const backupCodesRes = await API.get('/api/settings/backup-codes-status');
+    const backupCodes = backupCodesRes.backupCodes;
+    
+    // Populate account info
+    document.getElementById('settingsEmail').value = account.email;
+    document.getElementById('settingsDisplayName').value = account.displayName || '';
+    document.getElementById('settingsCreatedAt').value = fmtDate(account.createdAt);
+    
+    // Update 2FA status
+    updateMfaUI(mfaStatus.enabled);
+    document.getElementById('mfaStatus').textContent = mfaStatus.description;
+    document.getElementById('backupCodesCount').textContent = backupCodes.remaining || 0;
+    
+    hideLoading();
+  } catch (err) {
+    showToast('Failed to load settings: ' + err.message, 'error');
+    hideLoading();
+  }
+}
+
+function updateMfaUI(enabled) {
+  const setupBtn = document.getElementById('setupMfaBtn');
+  const disableBtn = document.getElementById('disableMfaBtn');
+  const setupModal = document.getElementById('mfaSetupModal');
+  const backupCodesStatus = document.getElementById('backupCodesStatus');
+  
+  if (enabled) {
+    setupBtn.style.display = 'none';
+    disableBtn.style.display = 'inline-block';
+    setupModal.style.display = 'none';
+    backupCodesStatus.style.display = 'block';
+  } else {
+    setupBtn.style.display = 'inline-block';
+    disableBtn.style.display = 'none';
+    setupModal.style.display = 'none';
+    backupCodesStatus.style.display = 'none';
+  }
+}
+
+async function updateDisplayName() {
+  const newName = document.getElementById('settingsDisplayName').value.trim();
+  if (!newName || newName.length < 2) {
+    showToast('Display name must be at least 2 characters', 'error');
+    return;
+  }
+  
+  try {
+    showLoading('Updating display name...');
+    await API.put('/api/settings/display-name', { displayName: newName });
+    currentUser.displayName = newName;
+    document.querySelector('.brand-name').textContent = newName;
+    showToast('Display name updated successfully', 'success');
+    hideLoading();
+  } catch (err) {
+    showToast('Failed to update display name: ' + err.message, 'error');
+    hideLoading();
+  }
+}
+
+async function changePassword() {
+  const current = document.getElementById('currentPassword').value;
+  const newPwd = document.getElementById('newPassword').value;
+  const confirm = document.getElementById('confirmPassword').value;
+  
+  // Validation
+  if (!current || !newPwd || !confirm) {
+    showToast('All password fields are required', 'error');
+    return;
+  }
+  if (newPwd.length < 12) {
+    showToast('New password must be at least 12 characters', 'error');
+    return;
+  }
+  if (newPwd !== confirm) {
+    showToast('Passwords do not match', 'error');
+    return;
+  }
+  
+  try {
+    showLoading('Changing password...');
+    await API.post('/api/settings/change-password', {
+      currentPassword: current,
+      newPassword: newPwd
+    });
+    
+    // Clear form
+    document.getElementById('currentPassword').value = '';
+    document.getElementById('newPassword').value = '';
+    document.getElementById('confirmPassword').value = '';
+    
+    showToast('Password changed successfully', 'success');
+    hideLoading();
+  } catch (err) {
+    showToast('Failed to change password: ' + err.message, 'error');
+    hideLoading();
+  }
+}
+
+async function setupMfa() {
+  try {
+    showLoading('Setting up 2FA...');
+    const response = await API.post('/api/auth/mfa/setup', {});
+    
+    // Display QR code modal
+    document.getElementById('mfaSetupModal').style.display = 'block';
+    document.getElementById('mfaQrCode').innerHTML = '<img src="' + response.qrCode + '" style="max-width:300px;border:1px solid #ddd;padding:.5rem">';
+    document.getElementById('mfaSecret').value = response.secret;
+    
+    // Clear any previous verification code
+    document.getElementById('mfaVerificationCode').value = '';
+    
+    hideLoading();
+  } catch (err) {
+    showToast('Failed to setup 2FA: ' + err.message, 'error');
+    hideLoading();
+  }
+}
+
+async function confirmMfa() {
+  const secret = document.getElementById('mfaSecret').value;
+  const code = document.getElementById('mfaVerificationCode').value;
+  
+  if (!code || code.length !== 6 || !/^\d+$/.test(code)) {
+    showToast('Please enter a valid 6-digit code', 'error');
+    return;
+  }
+  
+  try {
+    showLoading('Verifying 2FA setup...');
+    const response = await API.post('/api/auth/mfa/confirm', { secret, verificationCode: code });
+    
+    // Show backup codes
+    document.getElementById('mfaBackupCodes').style.display = 'block';
+    document.getElementById('backupCodesList').textContent = response.backup_codes.join('\n');
+    
+    // Update UI
+    updateMfaUI(true);
+    loadSettings();
+    
+    showToast('2FA enabled successfully! Save your backup codes.', 'success');
+    hideLoading();
+  } catch (err) {
+    showToast('Failed to enable 2FA: ' + err.message, 'error');
+    hideLoading();
+  }
+}
+
+async function disableMfa() {
+  const password = prompt('Enter your password to disable 2FA:');
+  if (!password) return;
+  
+  try {
+    showLoading('Disabling 2FA...');
+    await API.post('/api/auth/mfa/disable', { password });
+    
+    updateMfaUI(false);
+    loadSettings();
+    
+    showToast('2FA disabled successfully', 'success');
+    hideLoading();
+  } catch (err) {
+    showToast('Failed to disable 2FA: ' + err.message, 'error');
+    hideLoading();
+  }
+}
+
+function copyBackupCodes() {
+  const codesText = document.getElementById('backupCodesList').textContent;
+  navigator.clipboard.writeText(codesText).then(() => {
+    showToast('Backup codes copied to clipboard', 'success');
+  }).catch(err => {
+    showToast('Failed to copy codes: ' + err.message, 'error');
+  });
+}
+
 // ── In-memory state (loaded from server on boot) ─────────────
 let members  = [];
 let accounts = [];
@@ -1614,6 +1797,19 @@ async function initApp() {
     btn.addEventListener('click', () => switchAuthTab(btn.dataset.tab));
   });
   document.getElementById('logoutBtn')?.addEventListener('click', handleLogout);
+  
+  // Setup settings event listeners
+  document.getElementById('updateDisplayNameBtn')?.addEventListener('click', updateDisplayName);
+  document.getElementById('changePasswordBtn')?.addEventListener('click', changePassword);
+  document.getElementById('setupMfaBtn')?.addEventListener('click', setupMfa);
+  document.getElementById('confirmMfaBtn')?.addEventListener('click', confirmMfa);
+  document.getElementById('disableMfaBtn')?.addEventListener('click', disableMfa);
+  document.getElementById('copyBackupCodesBtn')?.addEventListener('click', copyBackupCodes);
+  
+  // Load settings when page loads
+  if (currentUser) {
+    loadSettings();
+  }
   
   // Check authentication status
   const isAuthenticated = await checkAuth();

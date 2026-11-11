@@ -532,3 +532,352 @@ th.desc .sort-icon::after { content: ' ▼'; }
   color: var(--gray-700);
 }
 
+/* ============================================================
+   Settings Page Styles
+   ============================================================ */
+
+#page-settings {
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+#page-settings .page-header {
+  background: linear-gradient(135deg, var(--blue) 0%, var(--purple) 100%);
+  color: #fff;
+  padding: 2rem 1.5rem;
+  border-radius: 12px;
+  margin-bottom: 2rem;
+  box-shadow: var(--shadow-md);
+}
+
+#page-settings .page-header h1 {
+  color: #fff;
+  font-size: 1.8rem;
+  margin-bottom: 0.3rem;
+}
+
+#page-settings .subtitle {
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 1rem;
+  margin-top: 0.5rem;
+}
+
+/* Settings section cards */
+#page-settings .section-card {
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  padding: 1.5rem;
+  margin-bottom: 1.5rem;
+  border: 1px solid var(--gray-200);
+  transition: box-shadow 0.2s, transform 0.2s;
+}
+
+#page-settings .section-card:hover {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  transform: translateY(-2px);
+}
+
+#page-settings .section-card h2 {
+  font-size: 1.2rem;
+  font-weight: 700;
+  color: var(--gray-900);
+  margin-bottom: 1.25rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 2px solid var(--gray-100);
+}
+
+/* Form groups styling */
+#page-settings .form-group {
+  margin-bottom: 1.25rem;
+}
+
+#page-settings .form-group label {
+  display: block;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--gray-700);
+  margin-bottom: 0.5rem;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+#page-settings .form-group input[type="email"],
+#page-settings .form-group input[type="text"],
+#page-settings .form-group input[type="password"] {
+  width: 100%;
+  padding: 0.75rem;
+  border: 1.5px solid var(--gray-300);
+  border-radius: 8px;
+  font-size: 0.95rem;
+  background: var(--gray-50);
+  color: var(--gray-900);
+  transition: all 0.2s;
+  font-family: var(--font);
+}
+
+#page-settings .form-group input:focus {
+  background: #fff;
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px var(--blue-lt);
+  outline: none;
+}
+
+#page-settings .form-group input[readonly] {
+  background: var(--gray-100);
+  cursor: not-allowed;
+  color: var(--gray-600);
+}
+
+/* Account info grid */
+#page-settings .section-card > div[style*="grid"] {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 1.5rem;
+}
+
+/* Button styling for settings */
+#page-settings .btn-primary {
+  background: linear-gradient(135deg, var(--blue) 0%, #1d4ed8 100%);
+  color: #fff;
+  border: none;
+  padding: 0.7rem 1.5rem;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  box-shadow: 0 2px 4px rgba(37, 99, 235, 0.2);
+  width: auto;
+  margin-top: 0.5rem;
+}
+
+#page-settings .btn-primary:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
+  opacity: 1;
+}
+
+#page-settings .btn-primary:active {
+  transform: translateY(0);
+}
+
+#page-settings .btn-secondary {
+  background: var(--gray-100);
+  color: var(--gray-700);
+  border: 1.5px solid var(--gray-300);
+  padding: 0.7rem 1.5rem;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  margin-top: 0.5rem;
+}
+
+#page-settings .btn-secondary:hover {
+  background: var(--gray-200);
+  border-color: var(--gray-400);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow);
+}
+
+/* MFA setup section */
+#page-settings #mfaSetupModal {
+  background: linear-gradient(135deg, #f0f7ff 0%, #f3e8ff 100%);
+  border: 1.5px solid #bfdbfe;
+  border-radius: 10px;
+  padding: 1.5rem;
+  margin-top: 1rem;
+}
+
+#page-settings #mfaSetupModal h3 {
+  color: var(--blue);
+  font-size: 1.1rem;
+  margin-bottom: 1rem;
+  font-weight: 700;
+}
+
+#page-settings #mfaSetupModal ol {
+  list-style-position: inside;
+  margin-left: 1rem;
+}
+
+#page-settings #mfaSetupModal li {
+  margin-bottom: 1rem;
+  color: var(--gray-700);
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+
+#page-settings #mfaQrCode {
+  display: flex;
+  justify-content: center;
+  padding: 1.5rem;
+  background: #fff;
+  border-radius: 10px;
+  margin: 1rem 0;
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.05);
+}
+
+#page-settings #mfaQrCode img {
+  max-width: 280px;
+  border: 2px solid var(--blue);
+  border-radius: 8px;
+  padding: 0.5rem;
+}
+
+/* Backup codes section */
+#page-settings #mfaBackupCodes {
+  background: linear-gradient(135deg, #fffbf0 0%, #fff7ed 100%);
+  border: 1.5px solid #fed7aa;
+  border-radius: 10px;
+  padding: 1.5rem;
+  margin-top: 1rem;
+}
+
+#page-settings #mfaBackupCodes h4 {
+  color: #d97706;
+  font-size: 1rem;
+  margin-bottom: 0.5rem;
+  font-weight: 700;
+}
+
+#page-settings #mfaBackupCodes p {
+  color: var(--gray-600);
+  font-size: 0.85rem;
+  margin-bottom: 1rem;
+  line-height: 1.4;
+}
+
+#page-settings #backupCodesList {
+  background: #fff;
+  padding: 1rem;
+  border-radius: 8px;
+  font-family: 'Courier New', monospace;
+  font-size: 0.9rem;
+  color: var(--gray-900);
+  margin-bottom: 1rem;
+  line-height: 1.8;
+  border: 1px solid var(--gray-200);
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.5rem;
+  word-break: break-all;
+}
+
+#page-settings #backupCodesList > * {
+  padding: 0.5rem;
+  background: var(--gray-50);
+  border-radius: 4px;
+  border: 1px solid var(--gray-200);
+  font-weight: 600;
+  color: #d97706;
+}
+
+/* Password strength section */
+#page-settings small {
+  display: block;
+  color: var(--gray-500);
+  font-size: 0.8rem;
+  margin-top: 0.35rem;
+  font-style: italic;
+}
+
+/* Security summary card special styling */
+#page-settings .section-card[style*="background:#f0fff4"] {
+  background: linear-gradient(135deg, #f0fff4 0%, #ecfdf5 100%) !important;
+  border: 1.5px solid #86efac;
+}
+
+#page-settings .section-card[style*="background:#f0fff4"] h2 {
+  color: #16a34a;
+}
+
+#page-settings .section-card[style*="background:#f0fff4"] ul {
+  list-style: none;
+  padding: 0;
+}
+
+#page-settings .section-card[style*="background:#f0fff4"] li {
+  padding: 0.75rem 0;
+  color: var(--gray-700);
+  font-size: 0.95rem;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  border-bottom: 1px solid rgba(134, 239, 172, 0.3);
+}
+
+#page-settings .section-card[style*="background:#f0fff4"] li:last-child {
+  border-bottom: none;
+}
+
+/* Status display */
+#page-settings #mfaStatus,
+#page-settings #backupCodesStatus {
+  display: inline-block;
+  padding: 0.5rem 1rem;
+  background: linear-gradient(135deg, var(--blue-lt) 0%, #dbeafe 100%);
+  border-radius: 6px;
+  color: var(--blue);
+  font-weight: 600;
+  border: 1px solid #93c5fd;
+}
+
+/* Messages section */
+#page-settings #settingsMsg {
+  padding: 1rem;
+  border-radius: 8px;
+  font-size: 0.95rem;
+  display: flex !important;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 1.5rem;
+}
+
+#page-settings #settingsMsg.success {
+  background: linear-gradient(135deg, var(--green-lt) 0%, #dcfce7 100%);
+  color: var(--green);
+  border: 1px solid #86efac;
+}
+
+#page-settings #settingsMsg.error {
+  background: linear-gradient(135deg, var(--red-lt) 0%, #fee2e2 100%);
+  color: var(--red);
+  border: 1px solid #fca5a5;
+}
+
+/* Responsive adjustments for settings */
+@media (max-width: 768px) {
+  #page-settings .section-card {
+    padding: 1.25rem;
+    margin-bottom: 1.25rem;
+  }
+
+  #page-settings .section-card h2 {
+    font-size: 1.05rem;
+  }
+
+  #page-settings .section-card > div[style*="grid"] {
+    grid-template-columns: 1fr;
+    gap: 1rem;
+  }
+
+  #page-settings #mfaSetupModal {
+    padding: 1rem;
+  }
+
+  #page-settings #backupCodesList {
+    grid-template-columns: 1fr;
+  }
+
+  #page-settings .btn-primary,
+  #page-settings .btn-secondary {
+    width: 100%;
+  }
+}
+
